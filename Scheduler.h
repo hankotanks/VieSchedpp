@@ -41,6 +41,7 @@
 #include "Misc/Subnetting.h"
 #include "Scan/Subcon.h"
 #include "Station/Network.h"
+#include "Station/NetworkSourcePaths.h"
 
 
 namespace VieVS {

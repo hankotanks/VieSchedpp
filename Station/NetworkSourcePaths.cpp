@@ -20,12 +20,31 @@ namespace VieVS {
         }
     }
 
+    unsigned long StationSourcePath::getSourceId() const {
+        return this->srcid_;
+    }
+
+    unsigned long StationSourcePath::getStationId() {
+        return this->staid_;
+    }
+
+    const std::vector<PointingVector>& StationSourcePath::getVectors() const {
+        return this->pvs_;
+    }
+
     NetworkSourcePaths::NetworkSourcePaths(Network& network, SourceList& sources) {
         this->source_paths_ = std::map<unsigned long, std::vector<StationSourcePath>>();
+        this->source_names_ = std::map<std::string, unsigned long>();
         for(auto& sta : network.refStations()) {
             std::vector<StationSourcePath> sta_paths = std::vector<StationSourcePath>();
             for(auto& src : sources.refSources()) sta_paths.push_back(StationSourcePath(sta, src));
             this->source_paths_.insert(std::pair<unsigned long, std::vector<StationSourcePath>>(sta.getId(), sta_paths));
+            this->source_names_.insert(std::pair<std::string, unsigned long>(sta.getName(), sta.getId()));
         }
+    }
+
+    std::vector<StationSourcePath>& NetworkSourcePaths::getStationSourcePaths(std::string stationName) {
+        unsigned long idx = this->source_names_[stationName];
+        return this->source_paths_[idx];
     }
 };
