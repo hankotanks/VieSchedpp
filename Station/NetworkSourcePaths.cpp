@@ -9,6 +9,12 @@
 #include "../Source/SourceList.h"
 
 namespace VieVS {
+    StationSourcePath::StationSourcePath() {
+        this->srcid_ = std::numeric_limits<unsigned long>::max();
+        this->staid_ = std::numeric_limits<unsigned long>::max();
+        this->pvs_ = std::vector<VieVS::PointingVector>();
+    }
+
     StationSourcePath::StationSourcePath(Station& sta, std::shared_ptr<const AbstractSource> src) {
         this->staid_ = sta.getId();
         this->srcid_ = src->getId();
@@ -33,19 +39,34 @@ namespace VieVS {
     }
 
     NetworkSourcePaths::NetworkSourcePaths(Network& network, SourceList& sources) {
-        this->src_paths_ = std::map<unsigned long, std::vector<StationSourcePath>>();
+        this->src_paths_ = std::map<unsigned long, std::map<unsigned long, StationSourcePath>>();
         this->sta_names_ = std::map<std::string, unsigned long>();
-        for(auto& src : sources.refSources()) this->src_names_.insert(std::pair<std::string, unsigned long>(src->getName(), src->getId()));
+        for(auto& src : sources.refSources()) {
+            this->src_names_.insert(std::pair<std::string, unsigned long>(src->getName(), src->getId()));
+        }
         for(auto& sta : network.refStations()) {
-            std::vector<StationSourcePath> sta_paths = std::vector<StationSourcePath>();
-            for(auto& src : sources.refSources()) sta_paths.push_back(StationSourcePath(sta, src));
-            this->src_paths_.insert(std::pair<unsigned long, std::vector<StationSourcePath>>(sta.getId(), sta_paths));
+            std::map<unsigned long, StationSourcePath> sta_paths = std::map<unsigned long, StationSourcePath>();
+            for(auto& src : sources.refSources()) {
+                sta_paths.insert(std::pair<unsigned long, StationSourcePath>(src->getId(), StationSourcePath(sta, src)));
+            }
+            this->src_paths_.insert(std::pair<unsigned long, std::map<unsigned long, StationSourcePath>>(sta.getId(), sta_paths));
             this->sta_names_.insert(std::pair<std::string, unsigned long>(sta.getName(), sta.getId()));
         }
     }
 
-    std::vector<StationSourcePath>& NetworkSourcePaths::getStationSourcePaths(std::string stationName) {
-        unsigned long idx = this->sta_names_[stationName];
-        return this->src_paths_[idx];
+    std::map<unsigned long, StationSourcePath>& NetworkSourcePaths::getAllPaths(std::string stationName) {
+        return getAllPaths(this->sta_names_[stationName]);
+    }
+
+    std::map<unsigned long, StationSourcePath>& NetworkSourcePaths::getAllPaths(unsigned long stationId) {
+        return this->src_paths_[stationId];
+    }
+
+    StationSourcePath& NetworkSourcePaths::getPath(unsigned long stationId, unsigned long sourceId) {
+        return getAllPaths(stationId)[sourceId];
+    }
+
+    StationSourcePath& NetworkSourcePaths::getPath(std::string stationName, unsigned long sourceId) {
+        return getAllPaths(stationName)[sourceId];
     }
 };

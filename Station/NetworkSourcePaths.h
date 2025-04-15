@@ -12,6 +12,7 @@
 namespace VieVS {
     class StationSourcePath {
     public:
+        StationSourcePath();
         StationSourcePath(Station& sta, std::shared_ptr<const AbstractSource> src);
         unsigned long getSourceId() const;
         unsigned long getStationId();
@@ -26,9 +27,12 @@ namespace VieVS {
     class NetworkSourcePaths {
     public:
         NetworkSourcePaths(VieVS::Network& network, VieVS::SourceList& sources);
-        std::vector<StationSourcePath>& getStationSourcePaths(std::string stationName);
+        std::map<unsigned long, StationSourcePath>& getAllPaths(std::string stationName);
+        std::map<unsigned long, StationSourcePath>& getAllPaths(unsigned long stationId);
+        StationSourcePath& getPath(unsigned long stationId, unsigned long sourceId);
+        StationSourcePath& getPath(std::string stationName, unsigned long sourceId);
     private:
-        std::map<unsigned long, std::vector<StationSourcePath>> src_paths_;
+        std::map<unsigned long, std::map<unsigned long, StationSourcePath>> src_paths_;
         std::map<std::string, unsigned long> sta_names_;
         std::map<std::string, unsigned long> src_names_;
     };
