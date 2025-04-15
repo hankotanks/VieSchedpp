@@ -28,8 +28,9 @@ namespace VieVS {
         NetworkSourcePaths(VieVS::Network& network, VieVS::SourceList& sources);
         std::vector<StationSourcePath>& getStationSourcePaths(std::string stationName);
     private:
-        std::map<unsigned long, std::vector<StationSourcePath>> source_paths_;
-        std::map<std::string, unsigned long> source_names_;
+        std::map<unsigned long, std::vector<StationSourcePath>> src_paths_;
+        std::map<std::string, unsigned long> sta_names_;
+        std::map<std::string, unsigned long> src_names_;
     };
 };
 
