@@ -46,6 +46,8 @@
 #include "Output/Output.h"
 #include "Scheduler.h"
 #include "XML/ParameterSettings.h"
+#include "Scheduler.h"
+#include "SchedulerILP.h"
 #ifdef VIESCHEDPP_LOG
 #include <boost/log/attributes/named_scope.hpp>
 #include <boost/log/core.hpp>
@@ -99,7 +101,7 @@ class VieSchedpp {
      * @brief start VieSched++
      * @author Matthias Schartner
      */
-    void run();
+    void run(const bool useSchedulerILP);
 
 
    private:

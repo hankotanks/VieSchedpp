@@ -99,7 +99,7 @@ int main( int argc, char *argv[] ) {
         // V1: standard usage:
         std::cout << "Processing file: " << arg << "\n";
         VieVS::VieSchedpp mainScheduler( arg );
-        mainScheduler.run();
+        mainScheduler.run(true);
 
         auto finish = std::chrono::high_resolution_clock::now();
         auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>( finish - start );
