@@ -57,6 +57,14 @@ void welcome();
 //                 "yourself contact matthias.schartner@geo.tuwien.ac.at\n";
 //}
 
+/**
+ * @brief wrapper around scheduling execution
+ * @author Hank Lewis
+ *
+ * Abstracts creation and execution of scheduling to allow selection 
+ * of the ILP scheduler VieVS::GlobalOptScheduler
+ */
+void executeScheduler( std::string& arg, const bool ILP = false);
 
 /**
  * @brief main function
@@ -93,32 +101,20 @@ int main( int argc, char *argv[] ) {
 
         // main scheduling program
 
-
-        auto start = std::chrono::high_resolution_clock::now();
-
-        // V1: standard usage:
-        std::cout << "Processing file: " << arg << "\n";
-        VieVS::VieSchedpp mainScheduler( arg );
-        mainScheduler.run(true);
-
-        auto finish = std::chrono::high_resolution_clock::now();
-        auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>( finish - start );
-        long long int usec = microseconds.count();
-
-        std::string t = "execution time: " + VieVS::util::milliseconds2string( usec );
-#ifdef VIESCHEDPP_LOG
-        BOOST_LOG_TRIVIAL( info ) << t;
-#else
-        std::cout << "[info] " << t;
-#endif
-        std::cout << std::endl;
+        executeScheduler(arg, false);
 
     } else if ( argc == 3 ) {
-        std::string flag = argv[1];
-        std::string file = argv[2];
+        std::string fst = argv[1];
+        std::string snd = argv[2];
 
-        if ( flag == "--snr" ) {
-            VieVS::SkdParser mySkdParser( file );
+        if ( snd == "--ilp" ) {
+            executeScheduler(fst, true);
+            
+            return 0;
+        } 
+
+        if ( fst == "--snr" ) {
+            VieVS::SkdParser mySkdParser( snd );
             mySkdParser.read();
 
             VieVS::Scheduler sched = mySkdParser.createScheduler();
@@ -127,8 +123,8 @@ int main( int argc, char *argv[] ) {
 
             out.writeSnrTable();
         }
-        if (flag == "--txt") {
-            VieVS::SkdParser mySkdParser( file );
+        if (fst == "--txt") {
+            VieVS::SkdParser mySkdParser( snd );
             mySkdParser.read();
 
             VieVS::Scheduler sched = mySkdParser.createScheduler();
@@ -138,8 +134,8 @@ int main( int argc, char *argv[] ) {
             out.writeOperationsNotes();
         }
 
-        if ( flag == "--ngs" ) {
-            VieVS::SkdParser mySkdParser( file );
+        if ( fst == "--ngs" ) {
+            VieVS::SkdParser mySkdParser( snd );
             mySkdParser.read();
 
             VieVS::Scheduler sched = mySkdParser.createScheduler();
@@ -208,4 +204,25 @@ void welcome() {
                  "In case you want to run VieSched++ from a terminal pass the path to the VieSchedpp.xml file as an "
                  "argument to the executable. \n"
                  "e.g.: ./VieSchedpp path/to/VieSchedpp.xml\n";
+}
+
+void executeScheduler( std::string& arg, const bool ILP) {
+    auto start = std::chrono::high_resolution_clock::now();
+
+    // V1: standard usage:
+    std::cout << "Processing file: " << arg << "\n";
+    VieVS::VieSchedpp mainScheduler( arg );
+    mainScheduler.run(ILP);
+
+    auto finish = std::chrono::high_resolution_clock::now();
+    auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>( finish - start );
+    long long int usec = microseconds.count();
+
+    std::string t = "execution time: " + VieVS::util::milliseconds2string( usec );
+#ifdef VIESCHEDPP_LOG
+    BOOST_LOG_TRIVIAL( info ) << t;
+#else
+    std::cout << "[info] " << t;
+#endif
+    std::cout << std::endl;
 }

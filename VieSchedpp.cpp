@@ -49,7 +49,7 @@ VieSchedpp::VieSchedpp( const std::string &inputFile ) : inputFile_{ inputFile }
 }
 
 
-void VieSchedpp::run(const bool useSchedulerILP) {
+void VieSchedpp::run(const bool ILP) {
     init_log();
 
     string versionNr = util::version();
@@ -289,9 +289,9 @@ void VieSchedpp::run(const bool useSchedulerILP) {
             }
 
             try {
-#if 1
-                VieVS::Scheduler* scheduler = useSchedulerILP 
-                    ? new VieVS::SchedulerILP(newInit, path_, fname)
+#if 1           
+                VieVS::Scheduler* scheduler = ILP 
+                    ? new VieVS::GlobalOptScheduler(newInit, path_, fname)
                     : new VieVS::Scheduler(newInit, path_, fname);
                 scheduler->start();
 
