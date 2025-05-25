@@ -67,10 +67,10 @@ void VieSchedpp::run(const bool ILP) {
 
 // open headerlog and statistics file
 #ifdef VIESCHEDPP_LOG
-    BOOST_LOG_TRIVIAL( info ) << "start initializing scheduler";
+    BOOST_LOG_TRIVIAL( info ) << "start initializing " << (ILP ? "ILP " : "") << "scheduler";
     BOOST_LOG_TRIVIAL( info ) << "writing initializer output to: initializer.txt";
 #else
-    cout << "[info] start initializing scheduler";
+    cout << "[info] start initializing " << (ILP ? "ILP " : "") << "scheduler";
     cout << "[info] writing initializer output to: initializer.txt";
 #endif
 
