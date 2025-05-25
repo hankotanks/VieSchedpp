@@ -130,7 +130,7 @@ class Scheduler : public VieVS_NamedObject {
      * @brief main function that starts the scheduling
      * @author Matthias Schartner
      */
-    void start() noexcept;
+    virtual void start() noexcept;
 
 
     /**
@@ -142,7 +142,7 @@ class Scheduler : public VieVS_NamedObject {
      * @param endposition required endposition
      * @return subcon with all information
      */
-    Subcon createSubcon( const std::shared_ptr<Subnetting> &subnetting, Scan::ScanType type,
+     virtual Subcon createSubcon( const std::shared_ptr<Subnetting> &subnetting, Scan::ScanType type,
                          const boost::optional<StationEndposition> &endposition = boost::none ) noexcept;
 
 
@@ -155,7 +155,7 @@ class Scheduler : public VieVS_NamedObject {
      * @param doNotObserveSourcesWithinMinRepeat consider scans (with reduced weight) if they are within min repeat time
      * @return subcon with all visible single source scans
      */
-    Subcon allVisibleScans( Scan::ScanType type, const boost::optional<StationEndposition> &endposition = boost::none,
+     virtual Subcon allVisibleScans( Scan::ScanType type, const boost::optional<StationEndposition> &endposition = boost::none,
                             bool doNotObserveSourcesWithinMinRepeat = true ) noexcept;
 
 
@@ -166,7 +166,7 @@ class Scheduler : public VieVS_NamedObject {
      * @param scan best possible next scans
      * @param of outstream file object
      */
-    void update( Scan &scan, std::ofstream &of ) noexcept;
+     virtual void update( Scan &scan, std::ofstream &of ) noexcept;
 
 
     /**
@@ -178,7 +178,7 @@ class Scheduler : public VieVS_NamedObject {
      * @param depth recursion depth
      * @param of outstream file object
      */
-    void consideredUpdate( unsigned long n1scans, unsigned long n2scans, int depth, std::ofstream &of ) noexcept;
+     virtual void consideredUpdate( unsigned long n1scans, unsigned long n2scans, int depth, std::ofstream &of ) noexcept;
 
 
     /**
@@ -187,7 +187,7 @@ class Scheduler : public VieVS_NamedObject {
      *
      * @param of output stream
      */
-    void statistics( std::ofstream &of );
+     virtual void statistics( std::ofstream &of );
 
 
     /**
@@ -197,7 +197,7 @@ class Scheduler : public VieVS_NamedObject {
      * @param himp high impact scan descriptor
      * @param of outstream object
      */
-    void highImpactScans( HighImpactScanDescriptor &himp, std::ofstream &of );
+     virtual void highImpactScans( HighImpactScanDescriptor &himp, std::ofstream &of );
 
     /**
      * @brief schedule fringeFinder blocks
@@ -205,7 +205,7 @@ class Scheduler : public VieVS_NamedObject {
      *
      * @param of outstream object
      */
-    void calibratorBlocks( std::ofstream &of );
+     virtual void calibratorBlocks( std::ofstream &of );
 
     /**
      * @brief schedule fringeFinder blocks
@@ -213,7 +213,7 @@ class Scheduler : public VieVS_NamedObject {
      *
      * @param of outstream object
      */
-    void parallacticAngleBlocks( std::ofstream &of );
+     virtual void parallacticAngleBlocks( std::ofstream &of );
 
     /**
      * @brief schedule fringeFinder blocks
@@ -221,7 +221,7 @@ class Scheduler : public VieVS_NamedObject {
      *
      * @param of outstream object
      */
-    void differentialParallacticAngleBlocks( std::ofstream &of );
+     virtual void differentialParallacticAngleBlocks( std::ofstream &of );
 
 
     /**
@@ -230,7 +230,7 @@ class Scheduler : public VieVS_NamedObject {
      *
      * @param of outstream file object
      */
-    bool checkAndStatistics( std::ofstream &of ) noexcept;
+     virtual bool checkAndStatistics( std::ofstream &of ) noexcept;
 
 
     /**
@@ -239,7 +239,7 @@ class Scheduler : public VieVS_NamedObject {
      *
      * @return all sources
      */
-    const SourceList &getSourceList() const noexcept { return sourceList_; }
+     virtual const SourceList &getSourceList() const noexcept { return sourceList_; }
 
 
     /**
@@ -248,7 +248,7 @@ class Scheduler : public VieVS_NamedObject {
      *
      * @return station network
      */
-    const Network &getNetwork() const noexcept { return network_; }
+     virtual const Network &getNetwork() const noexcept { return network_; }
 
     /**
      * @brief get path
@@ -256,7 +256,7 @@ class Scheduler : public VieVS_NamedObject {
      *
      * @return path
      */
-    const std::string &getPath() const noexcept { return path_; }
+     virtual const std::string &getPath() const noexcept { return path_; }
 
     /**
      * @brief get observing mode network
@@ -264,7 +264,7 @@ class Scheduler : public VieVS_NamedObject {
      *
      * @return observing mode
      */
-    const std::shared_ptr<const ObservingMode> &getObservingMode() const noexcept { return obsModes_; }
+     virtual const std::shared_ptr<const ObservingMode> &getObservingMode() const noexcept { return obsModes_; }
 
 
     /**
@@ -273,7 +273,7 @@ class Scheduler : public VieVS_NamedObject {
      *
      * @return number of observations scheduled in this schedule
      */
-    int getNumberOfObservations() const noexcept;
+     virtual int getNumberOfObservations() const noexcept;
 
 
     /**
@@ -282,16 +282,16 @@ class Scheduler : public VieVS_NamedObject {
      *
      * @return all scans
      */
-    const std::vector<Scan> &getScans() const noexcept { return scans_; }
+     virtual const std::vector<Scan> &getScans() const noexcept { return scans_; }
 
 
     /**
      * @brief check if there is a satellite too close to a scan
      * @author Matthias Schartner
      */
-    void checkSatelliteAvoidance();
+     virtual void checkSatelliteAvoidance();
 
-   private:
+   protected:
     static unsigned long nextId;  ///< next id for this object type
     int version_;                 ///< version
     std::string path_;            ///< path to VieSchedpp.xml directory
