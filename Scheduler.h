@@ -239,7 +239,7 @@ class Scheduler : public VieVS_NamedObject {
      *
      * @return all sources
      */
-     virtual const SourceList &getSourceList() const noexcept { return sourceList_; }
+     const SourceList &getSourceList() const noexcept { return sourceList_; }
 
 
     /**
@@ -248,7 +248,7 @@ class Scheduler : public VieVS_NamedObject {
      *
      * @return station network
      */
-     virtual const Network &getNetwork() const noexcept { return network_; }
+     const Network &getNetwork() const noexcept { return network_; }
 
     /**
      * @brief get path
@@ -256,7 +256,7 @@ class Scheduler : public VieVS_NamedObject {
      *
      * @return path
      */
-     virtual const std::string &getPath() const noexcept { return path_; }
+     const std::string &getPath() const noexcept { return path_; }
 
     /**
      * @brief get observing mode network
@@ -264,7 +264,7 @@ class Scheduler : public VieVS_NamedObject {
      *
      * @return observing mode
      */
-     virtual const std::shared_ptr<const ObservingMode> &getObservingMode() const noexcept { return obsModes_; }
+     const std::shared_ptr<const ObservingMode> &getObservingMode() const noexcept { return obsModes_; }
 
 
     /**
@@ -273,7 +273,7 @@ class Scheduler : public VieVS_NamedObject {
      *
      * @return number of observations scheduled in this schedule
      */
-     virtual int getNumberOfObservations() const noexcept;
+     int getNumberOfObservations() const noexcept;
 
 
     /**
@@ -282,7 +282,7 @@ class Scheduler : public VieVS_NamedObject {
      *
      * @return all scans
      */
-     virtual const std::vector<Scan> &getScans() const noexcept { return scans_; }
+     const std::vector<Scan> &getScans() const noexcept { return scans_; }
 
 
     /**

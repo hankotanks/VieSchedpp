@@ -212,20 +212,32 @@
  ########################################## GUROBI #########################################
  ###########################################################################################
  if (NOT WIN32 AND NOT MSVC)
-     set(PATH_GUROBI "../gurobi/lib/" CACHE STRING "path to folder containing Gurobi library")
-     set(PATH_GUROBI_INCLUDE "../gurobi/include" CACHE STRING "path to folder containing Gurobi headers")
-     FIND_LIBRARY(GUROBI NAMES libgurobi_c++.a HINTS ${PATH_GUROBI})
-     if (GUROBI)
+     get_filename_component(GUROBI_HOME_ABSOLUTE "../gurobi" REALPATH ${CMAKE_CURRENT_LIST_DIR})
+     set(ENV{GUROBI_HOME} "${GUROBI_HOME_ABSOLUTE}")
+     set(GUROBI_PATH_LIB "$ENV{GUROBI_HOME}/lib")
+     set(GUROBI_PATH_INC "$ENV{GUROBI_HOME}/include")
+     set(ENV{PATH} "$ENV{PATH}:$ENV{GUROBI_HOME}/bin")
+     set(ENV{LD_LIBRARY_PATH} "$ENV{LD_LIBRARY_PATH}:${GUROBI_PATH_LIB}")
+     set(PATH_GUROBI ${GUROBI_PATH_LIB} CACHE STRING "path to folder containing Gurobi library")
+     set(PATH_GUROBI_INCLUDE ${GUROBI_PATH_INC} CACHE STRING "path to folder containing Gurobi headers")
+     # message($ENV{GUROBI_HOME})
+     # message($ENV{PATH})
+     # message($ENV{LD_LIBRARY_PATH})
+     FIND_LIBRARY(GUROBI NAMES gurobi gurobi100 gurobi110 gurobi120 HINTS ${PATH_GUROBI} PATH_SUFFIXES lib)
+     FIND_LIBRARY(GUROBI_CPP NAMES gurobi_c++ HINTS ${PATH_GUROBI} PATH_SUFFIXES lib)
+     if (GUROBI AND GUROBI_CPP)
          message("Gurobi library found")
-         message("  Gurobi location: ${GUROBI}")
-         TARGET_LINK_LIBRARIES(VieSchedpp ${GUROBI})
-         include_directories(${PATH_GUROBI_INCLUDE})
-         target_compile_definitions(VieSchedpp PRIVATE WITH_GUROBI)
+         message("  Gurobi C location: ${GUROBI}")
+         message("  Gurobi C++ location: ${GUROBI_CPP}")
+         target_link_libraries(VieSchedpp ${GUROBI_CPP} ${GUROBI} pthread stdc++)
+         target_include_directories(VieSchedpp PUBLIC SYSTEM ${PATH_GUROBI_INCLUDE})
+         target_compile_definitions(VieSchedpp PUBLIC WITH_GUROBI)
      else ()
          message("ERROR: Gurobi not found!")
      endif ()
  endif ()
  ######################################## end of block #####################################
+
 
  ###########################################################################################
  ###################################### VERSION NUMBER #####################################

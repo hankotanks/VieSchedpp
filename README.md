@@ -93,6 +93,11 @@ The following code shows how to install all components of VieSched++ as well as 
 	# see https://support.gurobi.com/hc/en-us/articles/4534161999889-How-do-I-install-Gurobi-Optimizer
 	tar xvfz gurobi12.0.2_linux64.tar.gz --strip-components=1
 	mv linux64 gurobi
+	cd gurobi
+	make -C src/build
+	rm lib/libgurobi_c++.a
+	cp src/build/libgurobi_c++.a lib
+
 	# NOTE: If using an ARM system, replace linux64 with armlinux64 above
 
 	# make VieSched++
