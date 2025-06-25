@@ -21,6 +21,7 @@
  message(Build: ${CMAKE_BUILD_TYPE})
 
  set(CMAKE_CXX_STANDARD 14)
+ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
  set(SOURCE_FILES
          Station/Antenna/AbstractAntenna.cpp Station/Antenna/AbstractAntenna.h
@@ -102,7 +103,7 @@
          Source/Satellite.cpp Source/Satellite.h
          Station/Antenna/Antenna_GGAO.cpp Station/Antenna/Antenna_GGAO.h
          SGP4/CoordGeodetic.h
-         SGP4/Tle.h
+         SGP4/Tle.h 
          SGP4/TleException.h
          SGP4/DateTime.h
          SGP4/SGP4.h
@@ -206,6 +207,25 @@
  endif ()
  ######################################## end of block #####################################
 
+
+ ###########################################################################################
+ ########################################## GUROBI #########################################
+ ###########################################################################################
+ if (NOT WIN32 AND NOT MSVC)
+     set(PATH_GUROBI "../gurobi/lib/" CACHE STRING "path to folder containing Gurobi library")
+     set(PATH_GUROBI_INCLUDE "../gurobi/include" CACHE STRING "path to folder containing Gurobi headers")
+     FIND_LIBRARY(GUROBI NAMES libgurobi_c++.a HINTS ${PATH_GUROBI})
+     if (GUROBI)
+         message("Gurobi library found")
+         message("  Gurobi location: ${GUROBI}")
+         TARGET_LINK_LIBRARIES(VieSchedpp ${GUROBI})
+         include_directories(${PATH_GUROBI_INCLUDE})
+         target_compile_definitions(VieSchedpp PRIVATE WITH_GUROBI)
+     else ()
+         message("ERROR: Gurobi not found!")
+     endif ()
+ endif ()
+ ######################################## end of block #####################################
 
  ###########################################################################################
  ###################################### VERSION NUMBER #####################################

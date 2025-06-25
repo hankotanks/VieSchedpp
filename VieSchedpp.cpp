@@ -289,19 +289,13 @@ void VieSchedpp::run(const bool ILP) {
             }
 
             try {
-#if 1           
                 VieVS::Scheduler* scheduler = ILP 
-                    ? new VieVS::GlobalOptScheduler(newInit, path_, fname)
-                    : new VieVS::Scheduler(newInit, path_, fname);
+                    ? new VieVS::GlobalOptScheduler( newInit, path_, fname )
+                    : new VieVS::Scheduler( newInit, path_, fname );
                 scheduler->start();
 
                 // create output
                 VieVS::Output output(*scheduler);
-#else
-                VieVS::Scheduler scheduler = VieVS::Scheduler(newInit, path_, fname);
-                scheduler.start();
-                VieVS::Output output(scheduler);
-#endif
                 output.createAllOutputFiles( statisticsOf, skdCatalogs_ );
 
                 if ( auto ctree = xml_.get_child_optional( "VieSchedpp.simulator" ).is_initialized() ) {

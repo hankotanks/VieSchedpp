@@ -35,10 +35,10 @@
 
 
 #include "Initializer.h"
-#include "Misc/Constants.h"
-#include "Misc/StationEndposition.h"
-#include "Misc/Subnetting.h"
-#include "Scan/Subcon.h"
+// #include "Misc/Constants.h"
+// #include "Misc/StationEndposition.h"
+// #include "Misc/Subnetting.h"
+// #include "Scan/Subcon.h"
 #include "Station/Network.h"
 #include "Scheduler.h"
 
@@ -78,10 +78,16 @@ public:
     * @param scans list of scans
     * @param xml VieSchedpp.xml file
     */
-    GlobalOptScheduler(std::string name, std::string path, Network network, SourceList sourceList,
+    GlobalOptScheduler( std::string name, std::string path, Network network, SourceList sourceList,
             std::vector<Scan> scans,
             boost::property_tree::ptree xml, std::shared_ptr<ObservingMode> obsModes = nullptr ) : 
         Scheduler(name, path, network, sourceList, scans, xml, obsModes) { /* STUB */ }
+
+    /**
+     * @brief main function that starts the scheduling
+     * @author Hank Lewis
+     */
+    void start() noexcept;
 };
 }
 #endif // GLOBAL_OPT_SCHEDULER_H
