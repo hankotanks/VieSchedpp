@@ -26,7 +26,10 @@
 
 #ifndef GLOBAL_OPT_SCHEDULER_H
 #define GLOBAL_OPT_SCHEDULER_H
-
+#if 0
+#define WITH_GUROBI
+#include </home/hank/Projects/VieSchedpp/gurobi/include/gurobi_c++.h>
+#endif
 #include <boost/date_time.hpp>
 #include <boost/optional.hpp>
 #ifdef WITH_GUROBI
@@ -219,10 +222,18 @@ public:
     
 #ifdef WITH_GUROBI
 private:
-    const GRBVar& getX(const unsigned int t, 
-        std::shared_ptr<AbstractSource> src, const Station& sta);
-    const GRBVar& getY(const unsigned int t, std::shared_ptr<AbstractSource> src);
+    const GRBVar& getX(unsigned int t, 
+        const std::shared_ptr<const AbstractSource> src, const Station& sta, const bool tIdx = false);
+    const GRBVar& getY(unsigned int t, const std::shared_ptr<const AbstractSource> src, const bool tIdx = false);
+    unsigned int calculateSlewTime(
+        const unsigned int currT,
+        const unsigned int nextT,
+        const Station& sta, 
+        const std::shared_ptr<const AbstractSource> currSrc, 
+        const std::shared_ptr<const AbstractSource> nextSrc);
 private:
+    unsigned int minScan_;
+    unsigned int blockCount_;
     std::unordered_map<unsigned long, std::size_t> sta2idx_;
     std::unordered_map<unsigned long, std::size_t> src2idx_;
     GRBEnv* env_ = nullptr;
