@@ -1,7 +1,4 @@
 #include "GlobalOptScheduler.h"
-#include "Misc/TimeSystem.h"
-#include "Scan/Observation.h"
-#include "Scan/PointingVector.h"
 
 namespace {
     const unsigned int MIN_SCAN_DEFAULT = 30;
@@ -48,7 +45,6 @@ namespace VieVS {
             sta2idx_.insert(std::make_pair(sta.getId(), sta2idx_.size()));
         }
             
-        
         try {
             env_ = new GRBEnv(true);
             env_->start();
@@ -102,7 +98,7 @@ namespace VieVS {
         for(const auto currSrc : sourceList_.getSources()) for(const auto nextSrc : sourceList_.getSources())
         for(unsigned int currT = 0, nextT; currT < blockCount_ - 1; ++currT) for(nextT = currT + 1; nextT < blockCount_; ++nextT) {
             unsigned int slewT = GlobalOptScheduler::calculateSlewTime(sta, currSrc, nextSrc, currT * minScan_, nextT * minScan_);
-            if((nextT - currT) * (minScan_ - 1) >= slewT) continue;
+            if(nextT - currT >= 1 + slewT / minScan_) continue;
 
             GRBLinExpr expr = GlobalOptScheduler::getX(currT, currSrc, sta, true) + \
                 GlobalOptScheduler::getX(nextT, nextSrc, sta, true);
@@ -118,6 +114,7 @@ namespace VieVS {
                     expr += GlobalOptScheduler::getX(i, src, sta, true);
 
                 model_->addConstr(expr <= (GlobalOptScheduler::getY(i, src, true) * network_.getNSta()));
+                model_->addConstr(expr >= GlobalOptScheduler::getY(i, src, true) * 2);
             }
         }
 
@@ -175,13 +172,19 @@ namespace VieVS {
         const std::shared_ptr<const AbstractSource> nextSrc,
         const double currT,
         const double nextT) {
+        if(currSrc->getId() == nextSrc->getId()) return 0;
+        
         PointingVector currVec(sta.getId(), currSrc->getId());
         PointingVector nextVec(sta.getId(), nextSrc->getId());
+
         currVec.setTime(currT);
         nextVec.setTime(nextT);
         sta.calcAzEl_rigorous(currSrc, currVec);
         sta.calcAzEl_rigorous(nextSrc, nextVec);
-        // TODO: properly configure pointing vectors
+
+        PointingVector tempVec(nextVec);
+        if(!sta.isVisible(tempVec)) return std::numeric_limits<unsigned int>::max();
+
         return sta.getAntenna().slewTime(currVec, nextVec);
     }
     

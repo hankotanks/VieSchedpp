@@ -26,14 +26,14 @@
 
 #ifndef GLOBAL_OPT_SCHEDULER_H
 #define GLOBAL_OPT_SCHEDULER_H
-#if 0
+#if 1
 #define WITH_GUROBI
 #include </home/hank/Projects/VieSchedpp/gurobi/include/gurobi_c++.h>
 #endif
 #include <boost/date_time.hpp>
 #include <boost/optional.hpp>
 #ifdef WITH_GUROBI
-#include <gurobi_c++.h>
+// #include <gurobi_c++.h>
 #endif
 #include <memory>
 #include <tuple>
@@ -43,6 +43,7 @@
 #include <iostream>
 #include <numeric>
 #include <algorithm>
+#include <limits>
 
 #include "Initializer.h"
 #include "Input/LogParser.h"
@@ -56,6 +57,7 @@
 #include "Station/Network.h"
 #include "Scheduler.h"
 #include "Scan/PointingVector.h"
+#include "Scan/Observation.h"
 
 namespace VieVS {
 /**
