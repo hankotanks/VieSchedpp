@@ -16,7 +16,6 @@
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <chrono>
 // clang-format off
 #include "VieSchedpp.h"
 // clang-format on

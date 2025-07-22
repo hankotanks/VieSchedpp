@@ -45,6 +45,7 @@
 #include <algorithm>
 
 #include "Initializer.h"
+#include "Input/LogParser.h"
 #include "Misc/Constants.h"
 #include "Misc/StationEndposition.h"
 #include "Misc/Subnetting.h"
@@ -235,9 +236,11 @@ private:
         const std::shared_ptr<const AbstractSource> src, const Station& sta, const bool tIdx = false);
     const GRBVar& getY(unsigned int t, const std::shared_ptr<const AbstractSource> src, const bool tIdx = false);
     unsigned int calculateSlewTime(
-        const Station& sta, 
+        Station& sta, 
         const std::shared_ptr<const AbstractSource> currSrc, 
-        const std::shared_ptr<const AbstractSource> nextSrc);
+        const std::shared_ptr<const AbstractSource> nextSrc,
+        const double currT,
+        const double nextT);
 private:
     unsigned int minScan_;
     unsigned int blockCount_;

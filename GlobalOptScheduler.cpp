@@ -1,4 +1,7 @@
 #include "GlobalOptScheduler.h"
+#include "Misc/TimeSystem.h"
+#include "Scan/Observation.h"
+#include "Scan/PointingVector.h"
 
 namespace {
     const unsigned int MIN_SCAN_DEFAULT = 30;
@@ -23,26 +26,44 @@ namespace VieVS {
         blockCount_ = TimeSystem::duration / minScan_;
 
 #ifdef VIESCHEDPP_LOG
+        BOOST_LOG_TRIVIAL( info ) << "src. count: " << sourceList_.getNSrc();
+        BOOST_LOG_TRIVIAL( info ) << "sta. count: " << network_.getNSta();
         BOOST_LOG_TRIVIAL( info ) << "scan block duration [s]: " << minScan_;
         BOOST_LOG_TRIVIAL( info ) << "time block count: " << blockCount_;
 #else
+        std::cout << "[info] src. count: " << sourceList_.getNSrc();
+        std::cout << "[info] sta. count: " << network_.getNSta();
         std::cout << "[info] scan block duration [s]: " << minScan_;
         std::cout << "[info] time block count: " << blockCount_;
 #endif
 
         for(const auto src : sourceList_.getSources())
             src2idx_.insert(std::make_pair(src->getId(), src2idx_.size()));
-        for(const auto& sta : network_.getStations())
-            sta2idx_.insert(std::make_pair(sta.getId(), sta2idx_.size()));
-
-        env_ = new GRBEnv(true);
-        env_->start();
-
+        for(const auto& sta : network_.getStations()) {
 #ifdef VIESCHEDPP_LOG
-        BOOST_LOG_TRIVIAL( info ) << "Started GRB environment";
+            BOOST_LOG_TRIVIAL( info ) << sta.getName() << " has observed for " << sta.getTotalObservingTime() << " seconds";
 #else
-        std::cout << "[info] Started GRB environment";
+            std::cout << "[info] " << sta.getName() << " has observed for " << sta.getTotalObservingTime() << " seconds";
 #endif
+            sta2idx_.insert(std::make_pair(sta.getId(), sta2idx_.size()));
+        }
+            
+        
+        try {
+            env_ = new GRBEnv(true);
+            env_->start();
+#ifdef VIESCHEDPP_LOG
+            BOOST_LOG_TRIVIAL( info ) << "Started GRB environment";
+#else
+            std::cout << "[info] Started GRB environment";
+#endif
+        } catch (GRBException& e) {
+#ifdef VIESCHEDPP_LOG
+            BOOST_LOG_TRIVIAL( error ) << "Gurobi Exception (" << e.getErrorCode() << "): " << e.getMessage();
+#else
+            std::cout << "[error] Gurobi Exception (" << e.getErrorCode() << "): " << e.getMessage();
+#endif
+        }
 
         model_ = new GRBModel(*env_);
         
@@ -77,10 +98,10 @@ namespace VieVS {
         }
 
         // must be sufficient time to slew between two targets
-        for(const Station& sta : network_.getStations())
+        for(Station& sta : network_.refStations())
         for(const auto currSrc : sourceList_.getSources()) for(const auto nextSrc : sourceList_.getSources())
         for(unsigned int currT = 0, nextT; currT < blockCount_ - 1; ++currT) for(nextT = currT + 1; nextT < blockCount_; ++nextT) {
-            unsigned int slewT = GlobalOptScheduler::calculateSlewTime(sta, currSrc, nextSrc);
+            unsigned int slewT = GlobalOptScheduler::calculateSlewTime(sta, currSrc, nextSrc, currT * minScan_, nextT * minScan_);
             if((nextT - currT) * (minScan_ - 1) >= slewT) continue;
 
             GRBLinExpr expr = GlobalOptScheduler::getX(currT, currSrc, sta, true) + \
@@ -149,12 +170,18 @@ namespace VieVS {
     }
 
     unsigned int GlobalOptScheduler::calculateSlewTime(
-        const Station& sta, 
+        Station& sta, 
         const std::shared_ptr<const AbstractSource> currSrc, 
-        const std::shared_ptr<const AbstractSource> nextSrc) {
-        const PointingVector currVec(sta.getId(), currSrc->getId());
-        const PointingVector nextVec(sta.getId(), nextSrc->getId());
-
+        const std::shared_ptr<const AbstractSource> nextSrc,
+        const double currT,
+        const double nextT) {
+        PointingVector currVec(sta.getId(), currSrc->getId());
+        PointingVector nextVec(sta.getId(), nextSrc->getId());
+        currVec.setTime(currT);
+        nextVec.setTime(nextT);
+        sta.calcAzEl_rigorous(currSrc, currVec);
+        sta.calcAzEl_rigorous(nextSrc, nextVec);
+        // TODO: properly configure pointing vectors
         return sta.getAntenna().slewTime(currVec, nextVec);
     }
     
@@ -171,7 +198,7 @@ namespace VieVS {
         for(unsigned int i = 0; i < blockCount_; ++i) {
             std::vector<bool> eolsMask(network_.getNSta(), false);
             std::vector<std::vector<PointingVector>> pvs;
-            for(const auto src : sourceList_.getSources()) {
+            for(auto src : sourceList_.refSources()) {
                 std::vector<PointingVector> pvCurr;
                 for(Station& sta : network_.refStations()) {
                     // skip if no observation is made
@@ -181,76 +208,49 @@ namespace VieVS {
                     PointingVector pv(sta.getId(), src->getId());
                     pv.setTime(i * minScan_);
                     sta.calcAzEl_rigorous(src, pv);
-                    pvCurr.emplace_back(sta.getId(), src->getId());
+                    pvCurr.push_back(std::move(pv));
 
                     eolsMask[sta2idx_[sta.getId()]] = true;
                 }
 
-                if(pvCurr.size()) pvs.push_back(std::move(pvCurr));
+                if(pvCurr.size()) {
+                    pvs.push_back(std::move(pvCurr));
+                }
             }
 
-            if(pvs.size() == 1) {
-                // single scan
-                std::vector<unsigned int> eolsCurr;
-                for(const PointingVector& pv : pvs[0]) eolsCurr.emplace_back(eols[sta2idx_[pv.getStaid()]]);
-                
-                scans_.emplace_back(pvs[0], eolsCurr, Scan::ScanType::standard);
-            } else if(pvs.size()) {
-                // subnetting scan
-                unsigned int nsta = 0;
-                for(const std::vector<PointingVector>& pvSub : pvs) nsta += pvSub.size();
-                ScanTimes times(nsta);
+            for(std::vector<PointingVector>& pvSub : pvs) {
+                if(pvSub.empty()) continue;
+                std::vector<unsigned int> eolsCurr = std::vector<unsigned int>(pvSub.size(), i * minScan_);
+                // for(const PointingVector& pv : pvSub) eolsCurr.emplace_back(eols[sta2idx_[pv.getStaid()]]);
 
-                std::vector<unsigned int> eolsCurr;
-                for(const std::vector<PointingVector>& pvSub : pvs) 
-                    for(const PointingVector& pv : pvSub) 
-                        eolsCurr.emplace_back(eols[sta2idx_[pv.getStaid()]]);
-
-                times.setEndOfLastScan(eolsCurr);
-                times.setObservingTimes(minScan_);
-                times.setObservingStarts(i * minScan_);
-
-                std::vector<PointingVector> pv;
-                pv.reserve(nsta);
-                for(const std::vector<PointingVector>& pvSub : pvs) 
-                    pv.insert(pv.end(), pvSub.begin(), pvSub.end());
-                
-                std::vector<Observation> obs;
-                for(const std::vector<PointingVector>& pvSub : pvs) {
-                    for(const PointingVector& pvFst : pvSub) {
-                        for(const PointingVector& pvSnd : pvSub) {
-                            if(pvFst.getStaid() == pvSnd.getStaid()) continue;
-                            obs.emplace_back(
-                                network_.getBaseline(std::make_pair(pvFst.getStaid(), pvSnd.getStaid())).getId(),
-                                pvFst.getStaid(),
-                                pvSnd.getStaid(),
-                                pvFst.getSrcid(),
-                                pvFst.getTime(),
-                                minScan_
-                            );
-                        }
-                    }
+                std::vector<PointingVector> pvSubEnd(pvSub);
+                for(PointingVector& pvCurr : pvSubEnd) {
+                    pvCurr.setTime(pvCurr.getTime() + minScan_);
+                    network_.refStation(pvCurr.getStaid()).calcAzEl_rigorous(sourceList_.getSource(pvCurr.getSrcid()), pvCurr);
                 }
 
-                scans_.emplace_back(pv, times, obs);
+                Scan scanCurr(pvSub, eolsCurr, Scan::ScanType::standard);
+                
+                scanCurr.referenceTime().setObservingStarts(i * minScan_);
+                scanCurr.setFixedScanDuration(minScan_);
+                scanCurr.setPointingVectorsEndtime(pvSubEnd);
 
+                sourceList_.refSource(scanCurr.getSourceId())->update(scanCurr.getNSta(), scanCurr.getNObs(), minScan_, true);
+                scans_.push_back(scanCurr);
             }
 
-            for(size_t j = 0; j < eolsMask.size(); ++j) if(eolsMask[j]) eols[j] += minScan_;
-
+            for(size_t j = 0; j < eolsMask.size(); ++j) if(eolsMask[j]) eols[j] = i * minScan_;
         }
     }
 #else
-    void GlobalOptScheduler::initialize() noexcept {
-        std::cout << "[info] FUCK THIS SHOULD NOT BE CALLED" << std::endl;
-    }
+    void GlobalOptScheduler::initialize() noexcept { /* STUB */ }
     void GlobalOptScheduler::start() noexcept {
 #ifdef VIESCHEDPP_LOG
         BOOST_LOG_TRIVIAL( info ) << "Running standard Scheduler instead of ILP program";
         BOOST_LOG_TRIVIAL( info ) << "This might be because Gurobi wasn't found during configuration";
 #else
         std::cout << "[info] Running standard Scheduler instead of ILP program";
-        std::cout << "[info] This might be because Gurobi wasn't found during configuration";
+        std::cout << "[info] Gurobi was probably not found during CMake configuration";
 #endif
         Scheduler::start();
     }
