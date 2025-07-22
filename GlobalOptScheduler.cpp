@@ -1,6 +1,4 @@
 #include "GlobalOptScheduler.h"
-#include "Scan/PointingVector.h"
-#include "Scan/Subcon.h"
 
 namespace {
     const unsigned int MIN_SCAN_DEFAULT = 30;
@@ -22,8 +20,15 @@ namespace VieVS {
 #ifdef WITH_GUROBI
     void GlobalOptScheduler::initialize() noexcept {
         minScan_ = getMinScan(network_);
-
         blockCount_ = TimeSystem::duration / minScan_;
+
+#ifdef VIESCHEDPP_LOG
+        BOOST_LOG_TRIVIAL( info ) << "scan block duration [s]: " << minScan_;
+        BOOST_LOG_TRIVIAL( info ) << "time block count: " << blockCount_;
+#else
+        std::cout << "[info] scan block duration [s]: " << minScan_;
+        std::cout << "[info] time block count: " << blockCount_;
+#endif
 
         for(const auto src : sourceList_.getSources())
             src2idx_.insert(std::make_pair(src->getId(), src2idx_.size()));
@@ -32,6 +37,12 @@ namespace VieVS {
 
         env_ = new GRBEnv(true);
         env_->start();
+
+#ifdef VIESCHEDPP_LOG
+        BOOST_LOG_TRIVIAL( info ) << "Started GRB environment";
+#else
+        std::cout << "[info] Started GRB environment";
+#endif
 
         model_ = new GRBModel(*env_);
         
@@ -45,6 +56,12 @@ namespace VieVS {
                 }
             }
         }
+
+#ifdef VIESCHEDPP_LOG
+        BOOST_LOG_TRIVIAL( info ) << "Initialized variables: " << x_.size() << "(x), " << y_.size() << "(y)";
+#else
+        std::cout << "[info] Initialized variables: " << x_.size() << "(x), " << y_.size() << "(y)";
+#endif
 
         // add constraints
 
@@ -83,6 +100,12 @@ namespace VieVS {
             }
         }
 
+#ifdef VIESCHEDPP_LOG
+        BOOST_LOG_TRIVIAL( info ) << "Added constraints";
+#else
+        std::cout << "[info] Added constraints";
+#endif
+
         min_ = model_->addVar(0.0, GRB_INFINITY, 0.0, GRB_INTEGER);
         for(const Station& sta : network_.getStations()) {
             GRBLinExpr expr;
@@ -98,6 +121,12 @@ namespace VieVS {
         // objective function
         GRBLinExpr obj { min_ };
         model_->setObjective(obj, GRB_MAXIMIZE);
+
+#ifdef VIESCHEDPP_LOG
+        BOOST_LOG_TRIVIAL( info ) << "Configured objective function";
+#else
+        std::cout << "[info] Configured objective function";
+#endif
     }
 
     const GRBVar& GlobalOptScheduler::getX(unsigned int t, 
@@ -119,7 +148,7 @@ namespace VieVS {
         return y_[idx];
     }
 
-    unsigned int calculateSlewTime(
+    unsigned int GlobalOptScheduler::calculateSlewTime(
         const Station& sta, 
         const std::shared_ptr<const AbstractSource> currSrc, 
         const std::shared_ptr<const AbstractSource> nextSrc) {
@@ -130,6 +159,11 @@ namespace VieVS {
     }
     
     void GlobalOptScheduler::start() noexcept {
+#ifdef VIESCHEDPP_LOG
+        BOOST_LOG_TRIVIAL( info ) << "Starting optimization";
+#else
+        std::cout << "[info] Starting optimization";
+#endif
         model_->optimize();
 
         std::vector<unsigned int> eols(network_.getNSta(), 0);
@@ -160,7 +194,7 @@ namespace VieVS {
                 std::vector<unsigned int> eolsCurr;
                 for(const PointingVector& pv : pvs[0]) eolsCurr.emplace_back(eols[sta2idx_[pv.getStaid()]]);
                 
-                scans_.emplace_back(pvs[0], eolsCurr);
+                scans_.emplace_back(pvs[0], eolsCurr, Scan::ScanType::standard);
             } else if(pvs.size()) {
                 // subnetting scan
                 unsigned int nsta = 0;
@@ -207,8 +241,17 @@ namespace VieVS {
         }
     }
 #else
-    void GlobalOptScheduler::initialize() noexcept { /* STUB */ }
+    void GlobalOptScheduler::initialize() noexcept {
+        std::cout << "[info] FUCK THIS SHOULD NOT BE CALLED" << std::endl;
+    }
     void GlobalOptScheduler::start() noexcept {
+#ifdef VIESCHEDPP_LOG
+        BOOST_LOG_TRIVIAL( info ) << "Running standard Scheduler instead of ILP program";
+        BOOST_LOG_TRIVIAL( info ) << "This might be because Gurobi wasn't found during configuration";
+#else
+        std::cout << "[info] Running standard Scheduler instead of ILP program";
+        std::cout << "[info] This might be because Gurobi wasn't found during configuration";
+#endif
         Scheduler::start();
     }
 #endif

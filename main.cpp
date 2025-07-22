@@ -80,7 +80,6 @@ void executeScheduler( std::string& arg, const bool ILP = false);
 int main( int argc, char *argv[] ) {
 //    std::set_terminate( VieSchedppTerminate );
 
-
     if ( argc == 1 ) {
         welcome();
         return 0;
@@ -207,22 +206,9 @@ void welcome() {
 }
 
 void executeScheduler( std::string& arg, const bool ILP) {
-    auto start = std::chrono::high_resolution_clock::now();
-
     // V1: standard usage:
-    std::cout << "Processing file: " << arg << "\n";
     VieVS::VieSchedpp mainScheduler( arg );
     mainScheduler.run(ILP);
 
-    auto finish = std::chrono::high_resolution_clock::now();
-    auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>( finish - start );
-    long long int usec = microseconds.count();
-
-    std::string t = "execution time: " + VieVS::util::milliseconds2string( usec );
-#ifdef VIESCHEDPP_LOG
-    BOOST_LOG_TRIVIAL( info ) << t;
-#else
-    std::cout << "[info] " << t;
-#endif
     std::cout << std::endl;
 }

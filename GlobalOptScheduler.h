@@ -26,14 +26,14 @@
 
 #ifndef GLOBAL_OPT_SCHEDULER_H
 #define GLOBAL_OPT_SCHEDULER_H
-#if 1
+#if 0
 #define WITH_GUROBI
 #include </home/hank/Projects/VieSchedpp/gurobi/include/gurobi_c++.h>
 #endif
 #include <boost/date_time.hpp>
 #include <boost/optional.hpp>
 #ifdef WITH_GUROBI
-// #include <gurobi_c++.h>
+#include <gurobi_c++.h>
 #endif
 #include <memory>
 #include <tuple>
@@ -54,10 +54,11 @@
 #include "Source/AbstractSource.h"
 #include "Station/Network.h"
 #include "Scheduler.h"
+#include "Scan/PointingVector.h"
 
 namespace VieVS {
 /**
- * @class Scheduler
+ * @class GlobalOptScheduler
  * @brief this is an overload of the original Scheduler class that implements
  * globally optimal scheduling using integer linear programming (ILP)
  *
@@ -80,6 +81,7 @@ public:
     GlobalOptScheduler( Initializer &init, std::string path, std::string fname ) : 
         Scheduler(init, path, fname) { GlobalOptScheduler::initialize(); }
 
+
     /**
     * @brief constructor
     * @author Hank Lewis
@@ -98,6 +100,7 @@ public:
             GlobalOptScheduler::initialize(); 
         }
 
+
     /**
      * @brief destructor
      * @author Hank Lewis
@@ -109,11 +112,13 @@ public:
 #endif
     }
 
+
     /**
      * @brief main function that starts the scheduling
      * @author Hank Lewis
      */
     void start() noexcept override;
+
 
     /**
      * @brief this function creates a subcon with all scans, times and scores
@@ -181,6 +186,7 @@ public:
      */
     void highImpactScans( HighImpactScanDescriptor &himp, std::ofstream &of ) override;
 
+
     /**
      * @brief schedule fringeFinder blocks
      * @author Hank Lewis
@@ -189,6 +195,7 @@ public:
      */
     void calibratorBlocks( std::ofstream &of ) override;
 
+
     /**
      * @brief schedule fringeFinder blocks
      * @author Hank Lewis
@@ -196,6 +203,7 @@ public:
      * @param of outstream object
      */
     void parallacticAngleBlocks( std::ofstream &of ) override;
+
 
     /**
      * @brief schedule fringeFinder blocks
@@ -213,6 +221,7 @@ public:
      * @param of outstream file object
      */
     bool checkAndStatistics( std::ofstream &of ) noexcept override;
+
 
     /**
      * @brief check if there is a satellite too close to a scan
