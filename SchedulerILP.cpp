@@ -310,10 +310,29 @@ namespace VieVS {
                 sourceList_.refSource(scanCurr.getSourceId())->update(scanCurr.getNSta(), scanCurr.getNObs(), minScan_, true);
                 scansCurr.push_back(scanCurr);
             }
+            
+            if(scansCurr.size() == 1) {
+                scans_.push_back(scansCurr[0]);
+            } else for(const Scan& s : scansCurr) {
+                std::vector<PointingVector> pvSub;
+                for(std::size_t i = 0; i < s.getNSta(); ++i) 
+                    pvSub.push_back(s.getPointingVector(i));        
 
+                std::vector<PointingVector> pvSubEnd(pvSub);
+                for(PointingVector& end : pvSubEnd) {
+                    end.setTime(end.getTime() + minScan_);
+                    network_.refStation(end.getStaid()).calcAzEl_rigorous(sourceList_.getSource(end.getSrcid()), end);
+                }
+
+                Scan scanSub(pvSub, s.getTimes(), s.getObservations());
+                scanSub.setPointingVectorsEndtime(pvSubEnd);
+
+                scans_.push_back(scanSub);
+            }
+
+#if 0
             // TODO: Statistics do not consider subnetting scans unless this is toggled on
             // However, if subnetting scans are accumulated then the schedule has incorrect tragets
-#if 0
             if(scansCurr.size() == 1) {
                 scans_.push_back(scansCurr[0]);
             } else if(!scansCurr.empty()) {
@@ -339,8 +358,6 @@ namespace VieVS {
                 scanSub.setPointingVectorsEndtime(pvsMergedEnd);
                 scans_.push_back(scanSub);
             }
-#else
-            for(const Scan& scan : scansCurr) scans_.push_back(scan);
 #endif
 
             for(size_t j = 0; j < eolsMask.size(); ++j) if(eolsMask[j]) eols[j] = i * minScan_;
@@ -362,10 +379,17 @@ namespace VieVS {
                         sourceList_.getSource(scan.getSourceId()), 
                         prev.getTime(),
                         scan.getTimes().getScanTime());
+#ifdef VIESCHEDPP_LOG
                     BOOST_LOG_TRIVIAL( info ) << sta.getName() << " is slewing from " 
                         << sourceList_.getSource(prev.getSrcid())->getName() << " to " 
                         << sourceList_.getSource(scan.getSourceId())->getName() << " over " 
                         << slewTime << " seconds";
+#else
+                    std::cout << sta.getName() << " is slewing from " 
+                        << sourceList_.getSource(prev.getSrcid())->getName() << " to " 
+                        << sourceList_.getSource(scan.getSourceId())->getName() << " over " 
+                        << slewTime << " seconds";
+#endif
                     stat.totalSlewTime += slewTime;
                     for(std::size_t i = 0; i < scan.getNSta(); ++i) {
                         if(scan.getPointingVector(i).getStaid() == sta.getId()) {
