@@ -1,3 +1,4 @@
+#include "Output/Output.h"
 #pragma clang diagnostic push
 #pragma ide diagnostic ignored "openmp-use-default-none"
 /*

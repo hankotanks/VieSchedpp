@@ -1,6 +1,5 @@
 #include "SchedulerILP.h"
-#include "Misc/TimeSystem.h"
-#include "Scan/PointingVector.h"
+#include "Misc/Subnetting.h"
 
 namespace {
     const unsigned int MIN_SCAN_DEFAULT = 30;
@@ -271,6 +270,7 @@ namespace VieVS {
                 }
             }
 
+            std::vector<Scan> scansCurr;
             for(std::vector<PointingVector>& pvSub : pvs) {
                 if(pvSub.empty()) continue;
                 for(PointingVector& pv : pvSub) {
@@ -308,8 +308,40 @@ namespace VieVS {
                 scanCurr.setObservations(obs);
 
                 sourceList_.refSource(scanCurr.getSourceId())->update(scanCurr.getNSta(), scanCurr.getNObs(), minScan_, true);
-                scans_.push_back(scanCurr);
+                scansCurr.push_back(scanCurr);
             }
+
+            // TODO: Statistics do not consider subnetting scans unless this is toggled on
+            // However, if subnetting scans are accumulated then the schedule has incorrect tragets
+#if 0
+            if(scansCurr.size() == 1) {
+                scans_.push_back(scansCurr[0]);
+            } else if(!scansCurr.empty()) {
+                std::vector<Observation> obsMerged;
+                std::vector<PointingVector> pvsMerged;
+                for(const Scan& s : scansCurr) {
+                    for(const Observation& o : s.getObservations()) obsMerged.push_back(o);
+                    // obsMerged.insert(obsMerged.end(), s.getObservations().begin(), s.getObservations().end());
+                    for(std::size_t i = 0; i < s.getNSta(); ++i) pvsMerged.push_back(s.getPointingVector(i));                                  
+                }
+
+                std::vector<PointingVector> pvsMergedEnd(pvsMerged);
+                for(PointingVector& end : pvsMergedEnd) {
+                    end.setTime(end.getTime() + minScan_);
+                    network_.refStation(end.getStaid()).calcAzEl_rigorous(sourceList_.getSource(end.getSrcid()), end);
+                }
+
+                ScanTimes timesMerged(pvsMerged.size());
+                timesMerged.setObservingStarts(i * minScan_);
+                timesMerged.setObservingTimes(minScan_);
+
+                Scan scanSub(pvsMerged, timesMerged, obsMerged);
+                scanSub.setPointingVectorsEndtime(pvsMergedEnd);
+                scans_.push_back(scanSub);
+            }
+#else
+            for(const Scan& scan : scansCurr) scans_.push_back(scan);
+#endif
 
             for(size_t j = 0; j < eolsMask.size(); ++j) if(eolsMask[j]) eols[j] = i * minScan_;
         }
@@ -320,7 +352,7 @@ namespace VieVS {
             stat.totalFieldSystemTime = 0;
             stat.totalSlewTime = 0;
             stat.totalObservingTime = sta.getTotalObservingTime();
-            
+
             PointingVector prev = sta2pv0_.at(sta.getId());
             for(const Scan& scan : scans_) {
                 if(scan.findIdxOfStationId(sta.getId())) {

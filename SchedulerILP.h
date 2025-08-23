@@ -36,6 +36,7 @@
 #include <utility>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <iostream>
 #include <numeric>
 #include <algorithm>
@@ -54,6 +55,7 @@
 #include "Scheduler.h"
 #include "Scan/PointingVector.h"
 #include "Scan/Observation.h"
+#include "Scan/PointingVector.h"
 
 namespace VieVS {
 /**
