@@ -1,4 +1,6 @@
-#include "GlobalOptScheduler.h"
+#include "SchedulerILP.h"
+#include "Misc/TimeSystem.h"
+#include "Scan/PointingVector.h"
 
 namespace {
     const unsigned int MIN_SCAN_DEFAULT = 30;
@@ -16,9 +18,11 @@ namespace {
     }
 }
 
+#define SKY_COVERAGE_CELL_COUNT 13
+
 namespace VieVS {
 #ifdef WITH_GUROBI
-    void GlobalOptScheduler::initialize() noexcept {
+    void SchedulerILP::initialize() noexcept {
         minScan_ = getMinScan(network_);
         blockCount_ = TimeSystem::duration / minScan_;
 
@@ -37,12 +41,8 @@ namespace VieVS {
         for(const auto src : sourceList_.getSources())
             src2idx_.insert(std::make_pair(src->getId(), src2idx_.size()));
         for(const auto& sta : network_.getStations()) {
-#ifdef VIESCHEDPP_LOG
-            BOOST_LOG_TRIVIAL( info ) << sta.getName() << " has observed for " << sta.getTotalObservingTime() << " seconds";
-#else
-            std::cout << "[info] " << sta.getName() << " has observed for " << sta.getTotalObservingTime() << " seconds";
-#endif
             sta2idx_.insert(std::make_pair(sta.getId(), sta2idx_.size()));
+            sta2pv0_.insert(std::make_pair(sta.getId(), sta.getCurrentPointingVector()));
         }
             
         try {
@@ -74,6 +74,11 @@ namespace VieVS {
             }
         }
 
+        for(const Station& sta : network_.getStations()) {
+            for(std::size_t i = 0; i < SKY_COVERAGE_CELL_COUNT; ++i)
+                z_.emplace_back(model_->addVar(0.0, 1.0, 0.0, GRB_BINARY));
+        }
+
 #ifdef VIESCHEDPP_LOG
         BOOST_LOG_TRIVIAL( info ) << "Initialized variables: " << x_.size() << "(x), " << y_.size() << "(y)";
 #else
@@ -87,7 +92,7 @@ namespace VieVS {
             for(const Station& sta : network_.getStations()) {
                 GRBLinExpr expr;
                 for(const auto src : sourceList_.getSources()) 
-                    expr += GlobalOptScheduler::getX(i, src, sta, true);
+                    expr += SchedulerILP::getX(i, src, sta);
 
                 model_->addConstr(expr <= 1);
             }
@@ -97,11 +102,11 @@ namespace VieVS {
         for(Station& sta : network_.refStations())
         for(const auto currSrc : sourceList_.getSources()) for(const auto nextSrc : sourceList_.getSources())
         for(unsigned int currT = 0, nextT; currT < blockCount_ - 1; ++currT) for(nextT = currT + 1; nextT < blockCount_; ++nextT) {
-            unsigned int slewT = GlobalOptScheduler::calculateSlewTime(sta, currSrc, nextSrc, currT * minScan_, nextT * minScan_);
+            unsigned int slewT = SchedulerILP::calculateSlewTime(sta, currSrc, nextSrc, currT * minScan_, nextT * minScan_);
             if(nextT - currT >= 1 + slewT / minScan_) continue;
 
-            GRBLinExpr expr = GlobalOptScheduler::getX(currT, currSrc, sta, true) + \
-                GlobalOptScheduler::getX(nextT, nextSrc, sta, true);
+            GRBLinExpr expr = SchedulerILP::getX(currT, currSrc, sta) + \
+                SchedulerILP::getX(nextT, nextSrc, sta);
 
             model_->addConstr(expr <= 1);
         }
@@ -111,10 +116,25 @@ namespace VieVS {
             for(const auto src : sourceList_.getSources()) {
                 GRBLinExpr expr;
                 for(const Station& sta : network_.getStations())
-                    expr += GlobalOptScheduler::getX(i, src, sta, true);
+                    expr += SchedulerILP::getX(i, src, sta);
 
-                model_->addConstr(expr <= (GlobalOptScheduler::getY(i, src, true) * network_.getNSta()));
-                model_->addConstr(expr >= GlobalOptScheduler::getY(i, src, true) * 2);
+                model_->addConstr(expr <= (SchedulerILP::getY(i, src) * network_.getNSta()));
+                model_->addConstr(expr >= SchedulerILP::getY(i, src) * 2);
+            }
+        }
+
+        // keep sky coverage cells up to date
+        for(Station& sta : network_.refStations()) {
+            for(std::size_t i = 0; i < SKY_COVERAGE_CELL_COUNT; ++i) {
+                GRBLinExpr expr;
+                for(unsigned int j = 0; j < blockCount_; ++j) {
+                    for(const auto src : sourceList_.getSources()) {
+                        if(SchedulerILP::calculateCell(j, src, sta) == i) 
+                            expr += SchedulerILP::getX(j, src, sta);
+                    }
+                }
+
+                model_->addConstr(SchedulerILP::getZ(sta, i) <= expr);
             }
         }
 
@@ -124,19 +144,13 @@ namespace VieVS {
         std::cout << "[info] Added constraints";
 #endif
 
-        min_ = model_->addVar(0.0, GRB_INFINITY, 0.0, GRB_INTEGER);
+        min_ = model_->addVar(0.0, SKY_COVERAGE_CELL_COUNT, 0.0, GRB_CONTINUOUS);
         for(const Station& sta : network_.getStations()) {
             GRBLinExpr expr;
-            for(unsigned int i = 0; i < blockCount_; ++i) {
-                for(const auto src : sourceList_.getSources()) {
-                    expr += GlobalOptScheduler::getX(i, src, sta, true);
-                }
-            }
-
+            for (std::size_t i = 0; i < SKY_COVERAGE_CELL_COUNT; ++i) expr += SchedulerILP::getZ(sta, i);
             model_->addConstr(min_ <= expr);
         }
 
-        // objective function
         GRBLinExpr obj { min_ };
         model_->setObjective(obj, GRB_MAXIMIZE);
 
@@ -147,31 +161,67 @@ namespace VieVS {
 #endif
     }
 
-    const GRBVar& GlobalOptScheduler::getX(unsigned int t, 
-        const std::shared_ptr<const AbstractSource> src, const Station& sta, const bool tIdx) {
-        
-        if(!tIdx) t /= TimeSystem::duration * getMinScan(network_);
+    const GRBVar& SchedulerILP::getX(
+        unsigned int t, 
+        const std::shared_ptr<const AbstractSource> src, const Station& sta) const {
         auto idx = t * sourceList_.getNSrc() * network_.getNSta() + \
-            src2idx_[src->getId()] * network_.getNSta() + sta2idx_[sta.getId()];
-
+            src2idx_.at(src->getId()) * network_.getNSta() + sta2idx_.at(sta.getId());
         return x_[idx];
     }
 
-    const GRBVar& GlobalOptScheduler::getY(unsigned int t, 
-        const std::shared_ptr<const AbstractSource> src, const bool tIdx) {
-        
-        if(!tIdx) t /= TimeSystem::duration * getMinScan(network_);
-        auto idx = t * sourceList_.getNSrc() + src2idx_[src->getId()];
-
+    const GRBVar& SchedulerILP::getY(
+        unsigned int t, 
+        const std::shared_ptr<const AbstractSource> src) const {
+        auto idx = t * sourceList_.getNSrc() + src2idx_.at(src->getId());
         return y_[idx];
     }
 
-    unsigned int GlobalOptScheduler::calculateSlewTime(
+    const GRBVar& SchedulerILP::getZ(
+        const Station& sta,
+        const std::size_t idx) const {
+        return z_[sta2idx_.at(sta.getId()) * SKY_COVERAGE_CELL_COUNT + idx];
+    }
+
+    const std::size_t SchedulerILP::calculateCell(
+        unsigned int t, 
+        const std::shared_ptr<const AbstractSource> src,
+        Station& sta) const {
+        constexpr double el_space = halfpi / 2.;
+
+        PointingVector pv{ sta.getId(), src->getId() };
+        pv.setTime(t * minScan_);
+        sta.calcAzEl_rigorous(src, pv);
+
+        std::size_t row = static_cast<std::size_t>( floorl( pv.getEl() / el_space ) );
+        std::size_t idx;
+        switch ( row ) {
+            case 0: {
+                double n = 9;
+                double az_space = twopi / n;
+                std::size_t col = static_cast<std::size_t>( roundl( util::wrap2twoPi( pv.getAz() ) / az_space ) );
+                if ( static_cast<double>(col) > n - 1 ) col = 0;
+                idx = col;
+                break;
+            }
+            default: {
+                double n = 4;
+                double az_space = twopi / n;
+                std::size_t col = static_cast<std::size_t>( roundl( util::wrap2twoPi( pv.getAz() ) / az_space ) );
+                if ( static_cast<double>(col) > n - 1 ) col = 0;
+                idx = 9 + col;
+                break;
+            }
+        }
+
+        return idx;
+    }
+
+    unsigned int SchedulerILP::calculateSlewTime(
         Station& sta, 
         const std::shared_ptr<const AbstractSource> currSrc, 
         const std::shared_ptr<const AbstractSource> nextSrc,
         const double currT,
-        const double nextT) {
+        const double nextT) const {
         if(currSrc->getId() == nextSrc->getId()) return 0;
         
         PointingVector currVec(sta.getId(), currSrc->getId());
@@ -188,7 +238,7 @@ namespace VieVS {
         return sta.getAntenna().slewTime(currVec, nextVec);
     }
     
-    void GlobalOptScheduler::start() noexcept {
+    void SchedulerILP::start() noexcept {
 #ifdef VIESCHEDPP_LOG
         BOOST_LOG_TRIVIAL( info ) << "Starting optimization";
 #else
@@ -205,7 +255,7 @@ namespace VieVS {
                 std::vector<PointingVector> pvCurr;
                 for(Station& sta : network_.refStations()) {
                     // skip if no observation is made
-                    if(GlobalOptScheduler::getX(i, src, sta, true).get(GRB_DoubleAttr_X) < 0.5) continue;
+                    if(SchedulerILP::getX(i, src, sta).get(GRB_DoubleAttr_X) < 0.5) continue;
                     
                     // station participates in scan at this timestep
                     PointingVector pv(sta.getId(), src->getId());
@@ -223,6 +273,10 @@ namespace VieVS {
 
             for(std::vector<PointingVector>& pvSub : pvs) {
                 if(pvSub.empty()) continue;
+                for(PointingVector& pv : pvSub) {
+                    network_.refSkyCoverage(network_.getStaid2skyCoverageId().at(pv.getStaid())).update(pv);
+                }
+
                 std::vector<unsigned int> eolsCurr = std::vector<unsigned int>(pvSub.size(), i * minScan_);
                 // for(const PointingVector& pv : pvSub) eolsCurr.emplace_back(eols[sta2idx_[pv.getStaid()]]);
 
@@ -233,10 +287,25 @@ namespace VieVS {
                 }
 
                 Scan scanCurr(pvSub, eolsCurr, Scan::ScanType::standard);
-                
                 scanCurr.referenceTime().setObservingStarts(i * minScan_);
                 scanCurr.setFixedScanDuration(minScan_);
                 scanCurr.setPointingVectorsEndtime(pvSubEnd);
+
+                for(unsigned long staid : scanCurr.getStationIds()) {
+                    network_.refStation(staid).addObservingTime(minScan_);
+                }
+
+                std::vector<Observation> obs;
+
+                std::vector<unsigned long> staids = scanCurr.getStationIds();
+                for(std::size_t i = 0; i < staids.size(); ++i) {
+                    for(std::size_t j = i + 1; j < staids.size(); ++j) {
+                        auto b = network_.getBaseline(std::make_pair(staids[i], staids[j]));
+                        obs.emplace_back(b.getId(), staids[i], staids[j], scanCurr.getSourceId(), i * minScan_, minScan_);
+                    }
+                }
+
+                scanCurr.setObservations(obs);
 
                 sourceList_.refSource(scanCurr.getSourceId())->update(scanCurr.getNSta(), scanCurr.getNObs(), minScan_, true);
                 scans_.push_back(scanCurr);
@@ -244,10 +313,47 @@ namespace VieVS {
 
             for(size_t j = 0; j < eolsMask.size(); ++j) if(eolsMask[j]) eols[j] = i * minScan_;
         }
+        
+        for(Station& sta : network_.refStations()) {
+            Station::Statistics stat;
+            stat.totalPreobTime = 0;
+            stat.totalFieldSystemTime = 0;
+            stat.totalSlewTime = 0;
+            stat.totalObservingTime = sta.getTotalObservingTime();
+            
+            PointingVector prev = sta2pv0_.at(sta.getId());
+            for(const Scan& scan : scans_) {
+                if(scan.findIdxOfStationId(sta.getId())) {
+                    stat.totalFieldSystemTime += sta.getPARA().systemDelay;
+                    unsigned int slewTime = SchedulerILP::calculateSlewTime(sta,
+                        sourceList_.getSource(prev.getSrcid()), 
+                        sourceList_.getSource(scan.getSourceId()), 
+                        prev.getTime(),
+                        scan.getTimes().getScanTime());
+                    BOOST_LOG_TRIVIAL( info ) << sta.getName() << " is slewing from " 
+                        << sourceList_.getSource(prev.getSrcid())->getName() << " to " 
+                        << sourceList_.getSource(scan.getSourceId())->getName() << " over " 
+                        << slewTime << " seconds";
+                    stat.totalSlewTime += slewTime;
+                    for(std::size_t i = 0; i < scan.getNSta(); ++i) {
+                        if(scan.getPointingVector(i).getStaid() == sta.getId()) {
+                            prev = scan.getPointingVector(i);
+                            break;
+                        }
+                    }
+                    stat.totalPreobTime += sta.getPARA().preob;
+                }
+            }
+
+            stat.totalIdleTime = TimeSystem::duration - stat.totalObservingTime - stat.totalSlewTime;
+            stat.totalObservingTime -= stat.totalPreobTime + stat.totalFieldSystemTime;
+            
+            sta.setStatistics(stat);
+        }
     }
 #else
-    void GlobalOptScheduler::initialize() noexcept { /* STUB */ }
-    void GlobalOptScheduler::start() noexcept {
+    void SchedulerILP::initialize() noexcept { /* STUB */ }
+    void SchedulerILP::start() noexcept {
 #ifdef VIESCHEDPP_LOG
         BOOST_LOG_TRIVIAL( info ) << "Running standard Scheduler instead of ILP program";
         BOOST_LOG_TRIVIAL( info ) << "This might be because Gurobi wasn't found during configuration";
@@ -259,49 +365,49 @@ namespace VieVS {
     }
 #endif
 
-    Subcon GlobalOptScheduler::createSubcon( const std::shared_ptr<Subnetting> &subnetting, Scan::ScanType type,
+    Subcon SchedulerILP::createSubcon( const std::shared_ptr<Subnetting> &subnetting, Scan::ScanType type,
                          const boost::optional<StationEndposition> &endposition ) noexcept {
         return Scheduler::createSubcon(subnetting, type, endposition);
     }
 
-    Subcon GlobalOptScheduler::allVisibleScans( Scan::ScanType type, const boost::optional<StationEndposition> &endposition,
+    Subcon SchedulerILP::allVisibleScans( Scan::ScanType type, const boost::optional<StationEndposition> &endposition,
                             bool doNotObserveSourcesWithinMinRepeat ) noexcept {
         return Scheduler::allVisibleScans(type, endposition, doNotObserveSourcesWithinMinRepeat);
     }
 
-    void GlobalOptScheduler::update( Scan &scan, std::ofstream &of ) noexcept {
+    void SchedulerILP::update( Scan &scan, std::ofstream &of ) noexcept {
         return Scheduler::update(scan, of);
     }
 
-    void GlobalOptScheduler::consideredUpdate( unsigned long n1scans, unsigned long n2scans, int depth, std::ofstream &of ) noexcept {
+    void SchedulerILP::consideredUpdate( unsigned long n1scans, unsigned long n2scans, int depth, std::ofstream &of ) noexcept {
         return Scheduler::consideredUpdate(n1scans, n2scans, depth, of);
     }
 
-    void GlobalOptScheduler::statistics( std::ofstream &of ) {
+    void SchedulerILP::statistics( std::ofstream &of ) {
         return Scheduler::statistics(of);
     }
 
-    void GlobalOptScheduler::highImpactScans( HighImpactScanDescriptor &himp, std::ofstream &of ) {
+    void SchedulerILP::highImpactScans( HighImpactScanDescriptor &himp, std::ofstream &of ) {
         return Scheduler::highImpactScans(himp, of);
     }
 
-    void GlobalOptScheduler::calibratorBlocks( std::ofstream &of ) {
+    void SchedulerILP::calibratorBlocks( std::ofstream &of ) {
         return Scheduler::calibratorBlocks(of);
     }
 
-    void GlobalOptScheduler::parallacticAngleBlocks( std::ofstream &of ) {
+    void SchedulerILP::parallacticAngleBlocks( std::ofstream &of ) {
         return Scheduler::parallacticAngleBlocks(of);
     }
 
-    void GlobalOptScheduler::differentialParallacticAngleBlocks( std::ofstream &of ) {
+    void SchedulerILP::differentialParallacticAngleBlocks( std::ofstream &of ) {
         return Scheduler::differentialParallacticAngleBlocks(of);
     }
 
-    bool GlobalOptScheduler::checkAndStatistics( std::ofstream &of ) noexcept {
+    bool SchedulerILP::checkAndStatistics( std::ofstream &of ) noexcept {
         return Scheduler::checkAndStatistics(of);
     }
 
-    void GlobalOptScheduler::checkSatelliteAvoidance() {
+    void SchedulerILP::checkSatelliteAvoidance() {
         return Scheduler::checkSatelliteAvoidance();
     }
 } // namespace VieVS

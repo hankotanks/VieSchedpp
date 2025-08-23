@@ -17,8 +17,8 @@
  */
 
 /**
- * @file GlobalOptScheduler.h
- * @brief class GlobalOptScheduler
+ * @file SchedulerILP.h
+ * @brief class SchedulerILP
  *
  * @author Hank Lewis
  * @date 24.05.2025
@@ -57,14 +57,14 @@
 
 namespace VieVS {
 /**
- * @class GlobalOptScheduler
+ * @class SchedulerILP
  * @brief this is an overload of the original Scheduler class that implements
  * globally optimal scheduling using integer linear programming (ILP)
  *
  * @author Hank Lewis
  * @date 24.05.2025
  */
-class GlobalOptScheduler : public Scheduler {
+class SchedulerILP : public Scheduler {
     friend class Output;
 private:
     void initialize() noexcept;
@@ -77,8 +77,8 @@ public:
     * @param path path to VieSchedpp.xml file
     * @param fname file name
     */
-    GlobalOptScheduler( Initializer &init, std::string path, std::string fname ) : 
-        Scheduler(init, path, fname) { GlobalOptScheduler::initialize(); }
+    SchedulerILP( Initializer &init, std::string path, std::string fname ) : 
+        Scheduler(init, path, fname) { SchedulerILP::initialize(); }
 
 
     /**
@@ -92,11 +92,11 @@ public:
     * @param scans list of scans
     * @param xml VieSchedpp.xml file
     */
-    GlobalOptScheduler( std::string name, std::string path, Network network, SourceList sourceList,
+    SchedulerILP( std::string name, std::string path, Network network, SourceList sourceList,
             std::vector<Scan> scans,
             boost::property_tree::ptree xml, std::shared_ptr<ObservingMode> obsModes = nullptr ) : 
         Scheduler(name, path, network, sourceList, scans, xml, obsModes) { 
-            GlobalOptScheduler::initialize(); 
+            SchedulerILP::initialize(); 
         }
 
 
@@ -104,7 +104,7 @@ public:
      * @brief destructor
      * @author Hank Lewis
     */
-    ~GlobalOptScheduler() {
+    ~SchedulerILP() {
 #ifdef WITH_GUROBI
         delete env_;
         delete model_;
@@ -230,24 +230,37 @@ public:
     
 #ifdef WITH_GUROBI
 private:
-    const GRBVar& getX(unsigned int t, 
-        const std::shared_ptr<const AbstractSource> src, const Station& sta, const bool tIdx = false);
-    const GRBVar& getY(unsigned int t, const std::shared_ptr<const AbstractSource> src, const bool tIdx = false);
+    const GRBVar& getX(
+        unsigned int t, 
+        const std::shared_ptr<const AbstractSource> src, 
+        const Station& sta) const;
+    const GRBVar& getY(
+        unsigned int t, 
+        const std::shared_ptr<const AbstractSource> src) const;
+    const GRBVar& getZ(
+        const Station& sta,
+        const std::size_t idx) const;
+    const std::size_t calculateCell(
+        unsigned int t, 
+        const std::shared_ptr<const AbstractSource> src,
+        Station& sta) const;
     unsigned int calculateSlewTime(
         Station& sta, 
         const std::shared_ptr<const AbstractSource> currSrc, 
         const std::shared_ptr<const AbstractSource> nextSrc,
         const double currT,
-        const double nextT);
+        const double nextT) const;
 private:
     unsigned int minScan_;
     unsigned int blockCount_;
+    std::unordered_map<unsigned long, PointingVector> sta2pv0_;
     std::unordered_map<unsigned long, std::size_t> sta2idx_;
     std::unordered_map<unsigned long, std::size_t> src2idx_;
     GRBEnv* env_ = nullptr;
     GRBModel* model_ = nullptr;
     std::vector<GRBVar> x_;
     std::vector<GRBVar> y_;
+    std::vector<GRBVar> z_;
     GRBVar min_;
 #endif
 };

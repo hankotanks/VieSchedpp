@@ -4,6 +4,7 @@ cmake-build-debug/
 cmake-build-release/
 cmake-build-relwithdebinfo/
 .idea/
+.vscode/
 *.autosave
 
 # Prerequisites

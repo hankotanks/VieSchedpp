@@ -61,7 +61,7 @@ void welcome();
  * @author Hank Lewis
  *
  * Abstracts creation and execution of scheduling to allow selection 
- * of the ILP scheduler VieVS::GlobalOptScheduler
+ * of the ILP scheduler VieVS::SchedulerILP
  */
 void executeScheduler( std::string& arg, const bool ILP = false);
 

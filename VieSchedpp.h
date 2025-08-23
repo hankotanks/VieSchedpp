@@ -47,7 +47,7 @@
 #include "Scheduler.h"
 #include "XML/ParameterSettings.h"
 #include "Scheduler.h"
-#include "GlobalOptScheduler.h"
+#include "SchedulerILP.h"
 #ifdef VIESCHEDPP_LOG
 #include <boost/log/attributes/named_scope.hpp>
 #include <boost/log/core.hpp>
