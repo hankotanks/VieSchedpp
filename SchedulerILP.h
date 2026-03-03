@@ -24,13 +24,10 @@
  * @date 24.05.2025
  */
 
-#ifndef GLOBAL_OPT_SCHEDULER_H
-#define GLOBAL_OPT_SCHEDULER_H
+#ifndef SCHEDULER_ILP_H
+#define SCHEDULER_ILP_H
 #include <boost/date_time.hpp>
 #include <boost/optional.hpp>
-#ifdef WITH_GUROBI
-#include <gurobi_c++.h>
-#endif
 #include <memory>
 #include <tuple>
 #include <utility>
@@ -43,19 +40,9 @@
 #include <limits>
 
 #include "Initializer.h"
-#include "Input/LogParser.h"
-#include "Misc/Constants.h"
-#include "Misc/StationEndposition.h"
-#include "Misc/Subnetting.h"
-#include "Misc/TimeSystem.h"
-#include "Misc/VieVS_NamedObject.h"
-#include "Scan/Subcon.h"
-#include "Source/AbstractSource.h"
+#include "Model.h"
 #include "Station/Network.h"
 #include "Scheduler.h"
-#include "Scan/PointingVector.h"
-#include "Scan/Observation.h"
-#include "Scan/PointingVector.h"
 
 namespace VieVS {
 /**
@@ -101,51 +88,15 @@ public:
             SchedulerILP::initialize(); 
         }
 
-
-    /**
-     * @brief destructor
-     * @author Hank Lewis
-    */
     ~SchedulerILP() {
-#ifdef WITH_GUROBI
-        delete env_;
-        delete model_;
-#endif
+        if(model_) delete model_;
     }
-
 
     /**
      * @brief main function that starts the scheduling
      * @author Hank Lewis
      */
     void start() noexcept override;
-
-
-    /**
-     * @brief this function creates a subcon with all scans, times and scores
-     * @author Hank Lewis
-     *
-     * @param subnetting true if subnetting is allowed, false otherwise
-     * @param type scan type
-     * @param endposition required endposition
-     * @return subcon with all information
-     */
-    Subcon createSubcon( const std::shared_ptr<Subnetting> &subnetting, Scan::ScanType type,
-                        const boost::optional<StationEndposition> &endposition = boost::none ) noexcept override;
-
-
-    /**
-     * @brief constructs all visible scans
-     * @author Hank Lewis
-     *
-     * @param type scan type
-     * @param endposition required endposition
-     * @param doNotObserveSourcesWithinMinRepeat consider scans (with reduced weight) if they are within min repeat time
-     * @return subcon with all visible single source scans
-     */
-    Subcon allVisibleScans( Scan::ScanType type, const boost::optional<StationEndposition> &endposition = boost::none,
-                        bool doNotObserveSourcesWithinMinRepeat = true ) noexcept override;
-
 
     /**
      * @brief updates the selected next scans to the schedule
@@ -156,19 +107,6 @@ public:
      */
     void update( Scan &scan, std::ofstream &of ) noexcept override;
 
-
-    /**
-     * @brief updates and prints the number of all considered scans
-     * @author Hank Lewis
-     *
-     * @param n1scans number of single source scans
-     * @param n2scans number of subnetting scans
-     * @param depth recursion depth
-     * @param of outstream file object
-     */
-    void consideredUpdate( unsigned long n1scans, unsigned long n2scans, int depth, std::ofstream &of ) noexcept override;
-
-
     /**
      * @brief statistics output
      * @author Hank Lewis
@@ -176,95 +114,8 @@ public:
      * @param of output stream
      */
      void statistics( std::ofstream &of ) override;
-
-
-    /**
-     * @brief schedule high impact scans
-     * @author Hank Lewis
-     *
-     * @param himp high impact scan descriptor
-     * @param of outstream object
-     */
-    void highImpactScans( HighImpactScanDescriptor &himp, std::ofstream &of ) override;
-
-
-    /**
-     * @brief schedule fringeFinder blocks
-     * @author Hank Lewis
-     *
-     * @param of outstream object
-     */
-    void calibratorBlocks( std::ofstream &of ) override;
-
-
-    /**
-     * @brief schedule fringeFinder blocks
-     * @author Hank Lewis
-     *
-     * @param of outstream object
-     */
-    void parallacticAngleBlocks( std::ofstream &of ) override;
-
-
-    /**
-     * @brief schedule fringeFinder blocks
-     * @author Hank Lewis
-     *
-     * @param of outstream object
-     */
-    void differentialParallacticAngleBlocks( std::ofstream &of ) override;
-
-
-    /**
-     * @brief checks the schedule with an independend methode
-     * @author Hank Lewis
-     *
-     * @param of outstream file object
-     */
-    bool checkAndStatistics( std::ofstream &of ) noexcept override;
-
-
-    /**
-     * @brief check if there is a satellite too close to a scan
-     * @author Hank Lewis
-     */
-    void checkSatelliteAvoidance() override;
-    
-#ifdef WITH_GUROBI
 private:
-    const GRBVar& getX(
-        unsigned int t, 
-        const std::shared_ptr<const AbstractSource> src, 
-        const Station& sta) const;
-    const GRBVar& getY(
-        unsigned int t, 
-        const std::shared_ptr<const AbstractSource> src) const;
-    const GRBVar& getZ(
-        const Station& sta,
-        const std::size_t idx) const;
-    const std::size_t calculateCell(
-        unsigned int t, 
-        const std::shared_ptr<const AbstractSource> src,
-        Station& sta) const;
-    unsigned int calculateSlewTime(
-        Station& sta, 
-        const std::shared_ptr<const AbstractSource> currSrc, 
-        const std::shared_ptr<const AbstractSource> nextSrc,
-        const double currT,
-        const double nextT) const;
-private:
-    unsigned int minScan_;
-    unsigned int blockCount_;
-    std::unordered_map<unsigned long, PointingVector> sta2pv0_;
-    std::unordered_map<unsigned long, std::size_t> sta2idx_;
-    std::unordered_map<unsigned long, std::size_t> src2idx_;
-    GRBEnv* env_ = nullptr;
-    GRBModel* model_ = nullptr;
-    std::vector<GRBVar> x_;
-    std::vector<GRBVar> y_;
-    std::vector<GRBVar> z_;
-    GRBVar min_;
-#endif
+     Model* model_ = nullptr;
 };
 }
-#endif // GLOBAL_OPT_SCHEDULER_H
+#endif // SCHEDULER_ILP_H

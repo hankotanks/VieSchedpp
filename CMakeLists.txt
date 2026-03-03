@@ -49,6 +49,7 @@
          Scan/ScanTimes.cpp Scan/ScanTimes.h
          Scheduler.cpp Scheduler.h
          SchedulerILP.cpp SchedulerILP.h
+         Model.cpp Model.h
          Input/SkdCatalogReader.cpp Input/SkdCatalogReader.h
          Station/SkyCoverage.cpp Station/SkyCoverage.h
          Misc/sofa.h Misc/sofam.h
