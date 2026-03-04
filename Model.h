@@ -29,7 +29,7 @@
 #include <cassert>
 #include <stdexcept>
 #include <map>
-#include "Scan/Scan.h"
+#include <type_traits>
 
 #ifdef WITH_GUROBI
 #include <gurobi_c++.h>
@@ -37,8 +37,30 @@
 
 #include "Source/SourceList.h"
 #include "Station/Network.h"
+#include "Scan/Scan.h"
 
 namespace VieVS {
+// forward declaration for ModelCoverage
+class Model; 
+
+/**
+ * @class ModelCoverage
+ * @brief abstract struct modelling sky coverage
+ * @author Hank Lewis
+ * @date 24.05.2025
+ */
+struct ModelCoverage {
+    virtual size_t cellCount(void) const noexcept = 0;
+    virtual size_t calculateCell(const Model* model, size_t t, 
+        const std::shared_ptr<const AbstractSource> q, Station& s) const noexcept = 0;
+};
+
+struct ModelCoverage13 : ModelCoverage {
+    size_t cellCount(void) const noexcept final;
+    size_t calculateCell(const Model* model, size_t t, 
+        const std::shared_ptr<const AbstractSource> q, Station& s) const noexcept final;
+};
+
 /**
  * @class Model
  * @brief wraps ILP implementation
@@ -46,6 +68,8 @@ namespace VieVS {
  * @date 24.05.2025
  */
 class Model {
+    friend struct ModelCoverage;
+    friend struct ModelCoverage13;
 public:
     /**
      * @brief constructor
@@ -55,7 +79,24 @@ public:
      * @param sourceList sourceList
      * @param blockLength blockLength
      */
-    Model(VieVS::Network& network, VieVS::SourceList& sourceList, unsigned int blockLength, unsigned int windowLength);
+    Model(VieVS::Network& network, VieVS::SourceList& sourceList, 
+        unsigned int blockLength, unsigned int windowLength);
+
+    /**
+     * @brief constructor with specified ModelCoverage implementation
+     * @author Hank Lewis
+     *
+     * @param network network
+     * @param sourceList sourceList
+     * @param blockLength blockLength
+     */
+    template<typename T>
+    Model(VieVS::Network& network, VieVS::SourceList& sourceList, 
+        unsigned int blockLength, unsigned int windowLength) : 
+        Model(network, sourceList, blockLength, windowLength) {
+            static_assert(std::is_base_of<ModelCoverage, T>::value, "unreachable");
+            coverage_ = std::make_unique<T>();
+        }
 
     /**
      * @brief destructor
@@ -86,11 +127,11 @@ private:
     bool checkStationVisibility(size_t t, 
         std::shared_ptr<const VieVS::AbstractSource> q, 
         Station& s) const noexcept;
-
+#if 0
     size_t calculateCell(size_t t, 
         const std::shared_ptr<const AbstractSource> q,
         Station& s) const noexcept;
-
+#endif
     size_t calculateSlewTime(Station& s, 
         const std::shared_ptr<const AbstractSource> q1, 
         const std::shared_ptr<const AbstractSource> q2,
@@ -108,6 +149,9 @@ private:
     size_t windowBlockCount_;
     // the length of the sliding optimization window (in seconds)
     unsigned int windowLength_;
+private:
+    // the sky coverage model used for the objective function
+    std::unique_ptr<ModelCoverage> coverage_;
 
 #ifdef WITH_GUROBI
 private:
@@ -121,13 +165,13 @@ private:
         enum ModelKeyType {
             sta_active,
             bln_active,
-            coverage
+            sta_coverage
         };
         ModelKeyType type;
         union {
             struct { size_t q, s, t; } sta_active;
             struct { size_t q, b, t; } bln_active;
-            struct { size_t s, c; } coverage;
+            struct { size_t s, c; } sta_coverage;
         } key;
 
         bool operator<(const ModelKey& other) const;
@@ -140,7 +184,7 @@ private:
             std::shared_ptr<const VieVS::AbstractSource> const q, 
             const Baseline& b, size_t t);
 
-        static ModelKey Coverage(const Model* model, const Station& s, size_t c);
+        static ModelKey StaCoverage(const Model* model, const Station& s, size_t c);
     };
 private:
     boost::optional<GRBVar> getVar(const ModelKey& key) const noexcept;
