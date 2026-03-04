@@ -215,10 +215,11 @@ next_b:
         for(Station& s : network_.refStations()) {
             for(const auto q1 : sourceList_.getSources()) {
                 for(const auto q2 : sourceList_.getSources()) {
-                    for(size_t t1 = 0; t1 < blockCount_; ++t1) {
+                    if(q1->getId() == q2->getId()) continue;
+                    for(size_t t1 = 0; t1 < blockCount_ - 1; ++t1) {
                         for(size_t t2 = t1 + 1; t2 < blockCount_; ++t2) {
                             size_t slew = Model::calculateSlewTime(s, q1, q2, t1, t2);
-                            if((t2 - t1) >= slew) continue;
+                            if(t2 - t1 > slew) continue;
                             GRBLinExpr lhs;
                             if(auto var = getVar(ModelKey::StaActive(this, q1, s, t1))) {
                                 lhs += *var;
@@ -315,12 +316,17 @@ next_t1:
 
     std::vector<Scan> Model::optimize(std::vector<Scan>& scans) {
         Model::loadScans(scans);
-        std::cout << "Initial:" << std::endl;
-        Model::dump(GRB_DoubleAttr_Start);
+
+        // std::cout << "Initial:" << std::endl;
+        // Model::dump(GRB_DoubleAttr_Start);
+
         if(!Model::optimize()) return {};
+
         std::cout << "Optimized" << std::endl;
         Model::dump(GRB_DoubleAttr_X);
-        return Model::readScans();
+
+        std::vector<Scan> scansOptimized = Model::readScans();
+        return scansOptimized;
     }
 }
 
@@ -394,10 +400,13 @@ namespace VieVS {
         s.calcAzEl_rigorous(q2, pv2);
 
         PointingVector tempVec(pv2);
-        if(!s.isVisible(tempVec)) return std::numeric_limits<size_t>::max();
+        if(!s.isVisible(tempVec, q2->getPARA().minElevation)) 
+            return std::numeric_limits<size_t>::max();
 
-        unsigned int slew = s.getAntenna().slewTime(pv1, pv2);
-        return (slew + blockLength_ - 1) / blockLength_;
+        unsigned int t_slew = s.getAntenna().slewTime(pv1, pv2);
+        unsigned int t_const = s.getPARA().systemDelay + s.getPARA().preob;
+
+        return (t_slew + t_const + blockLength_ - 1) / blockLength_;
     }
 
 #ifdef WITH_GUROBI
@@ -574,7 +583,7 @@ next_c:
 #endif
 
     bool Model::ScanBuilder::append(const Model* model, std::shared_ptr<const VieVS::AbstractSource> const q, 
-        const Station& s, size_t t) noexcept {
+        Station& s, size_t t) noexcept {
         if(qId != q->getId()) return false;
         try {
             size_t& eols = sData.at(s.getId()).second;
@@ -586,32 +595,69 @@ next_c:
         } catch(...) {
             PointingVector pv(s.getId(), qId);
             pv.setTime(t * model->blockLength_);
+            s.calcAzEl_rigorous(q, pv);
             sData.insert(std::make_pair(s.getId(), std::make_pair(pv, t + 1)));
             return true;
         }
     }
 
     Scan Model::ScanBuilder::finish(const Model* model) const noexcept {
-        // TODO
+        std::vector<PointingVector> pointingVectors;
+        std::vector<PointingVector> pointingVectorsEnd;
+        std::vector<unsigned int> endOfLastScan;
+
+        typedef std::pair<const unsigned long, std::pair<PointingVector, size_t>> Entry;
+        std::transform(sData.begin(), sData.end(), std::back_inserter(pointingVectors),
+            [](const Entry& entry) { return entry.second.first; });
+
+        size_t blockLength = model->blockLength_;
+        std::transform(sData.begin(), sData.end(), std::back_inserter(endOfLastScan),
+            [blockLength](const Entry& entry) { return entry.second.second * blockLength; });
+
+        pointingVectorsEnd.reserve(pointingVectors.size());
+        for(size_t i = 0; i < pointingVectors.size(); ++i) {
+            const PointingVector& pv0 = pointingVectors[i];
+            Station& s = model->network_.refStation(pv0.getStaid());
+            std::shared_ptr<const VieVS::AbstractSource> const q = model->sourceList_.getSource(qId);
+            
+            PointingVector pve(pv0.getStaid(), qId);
+            pve.setTime(endOfLastScan[i]);
+            s.calcAzEl_rigorous(q, pve);
+            pointingVectorsEnd.push_back(pve);
+        }
+
+        Scan scan(pointingVectors, endOfLastScan, Scan::ScanType::standard);
+        scan.setPointingVectorsEndtime(pointingVectorsEnd);
+
+        return scan;
     }
 
-    bool Model::ActiveScans::append(std::shared_ptr<const VieVS::AbstractSource> const q, 
-        const Station& s, size_t t) noexcept {
-        // TODO
+    void Model::ActiveScans::append(std::shared_ptr<const VieVS::AbstractSource> const q, 
+        Station& s, size_t t) noexcept {
+        for(Model::ScanBuilder& scan : scans_) {
+            if(scan.append(model_, q, s, t)) return;
+        }
+
+        PointingVector pv(s.getId(), q->getId());
+        pv.setTime(t * model_->blockLength_);
+        s.calcAzEl_rigorous(q, pv);
+
+        Model::ScanBuilder scan;
+        scan.qId = q->getId();
+        scan.sData.insert(std::make_pair(s.getId(), std::make_pair(pv, t + 1)));
+
+        scans_.emplace_back(scan);
     }
         
     void Model::ActiveScans::updateScans(std::vector<Scan>& scans, size_t t) {
         std::vector<size_t> remove;
-        for(size_t i = 0; i < scans_.size(); ++i) {
-            bool ongoing = false;
+        for(size_t i = 0, j = 0; i < scans_.size(); ++i, j = 0) {
             for(const auto& sEntry : scans_[i].sData) {
                 const auto& sData = sEntry.second;
-                if(sData.second == t) {
-                    ongoing = true;
-                    break;
-                }
+                if(sData.second > t) ++j;
             }
-            if(!ongoing) {
+
+            if(j < 2) {
                 Scan scan = scans_[i].finish(model_);
                 scans.emplace_back(scan);
                 remove.emplace_back(i);
@@ -628,8 +674,8 @@ next_c:
         std::vector<Scan> scans;
 
         Model::ActiveScans scansActive(this);
-        for(size_t t = 0; t < blockCount_; ++t) {
-            for(const Station& s : network_.getStations()) {
+        for(size_t t = 0; t <= blockCount_; ++t) {
+            for(Station& s : network_.refStations()) {
                 for(const auto q : sourceList_.getSources()) {
                     if(auto var = getVar(ModelKey::StaActive(this, q, s, t))) {
                         if(var->get(GRB_DoubleAttr_X) < 0.5) continue;

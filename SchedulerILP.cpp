@@ -57,7 +57,27 @@ namespace VieVS {
             return;
         }
 
-        scans_ = scansOptimal;
+        scans_.clear();
+        scans_.insert(scans_.end(), scansOptimal.begin(), scansOptimal.end());
+
+        sortSchedule( Timestamp::start );
+
+        // TODO: remove this debug block
+#if 0
+        for(const Station& s : network_.getStations()) {
+            size_t count = 0;
+            std::cout << s.getName() << ": ";
+            for(const Scan& scan : scans_) {
+                if(scan.findIdxOfStationId(s.getId())) {
+                    std::cout << scan.getSourceId() << "[" << scan.getTimes().getScanTime() / 60 << "], ";
+                    ++count;
+                }
+            }
+            std::cout << std::endl;
+            std::cout << s.getName() << ": " << count << std::endl;
+        }
+        std::cout << "length: " << scans_.size() << std::endl;
+#endif 
 
         updateObservingTimes();
 

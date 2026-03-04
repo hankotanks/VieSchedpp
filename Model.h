@@ -195,20 +195,20 @@ private:
 
         bool append(const Model* model, 
             std::shared_ptr<const VieVS::AbstractSource> const q, 
-            const Station& s, size_t t) noexcept;
+            Station& s, size_t t) noexcept;
 
         Scan finish(const Model* model) const noexcept;
     };
 
     class ActiveScans {
-    private:
+    public: // TODO: make private
         std::vector<ScanBuilder> scans_;
         const Model* model_;
     public:
         ActiveScans(const Model* model) : model_(model) { /* STUB */ }
 
-        bool append(std::shared_ptr<const VieVS::AbstractSource> const q, 
-            const Station& s, size_t t) noexcept;
+        void append(std::shared_ptr<const VieVS::AbstractSource> const q, 
+            Station& s, size_t t) noexcept;
         
         void updateScans(std::vector<Scan>& scans, size_t t);
     };
