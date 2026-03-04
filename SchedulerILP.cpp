@@ -1,5 +1,7 @@
 #include "SchedulerILP.h"
+
 #include <exception>
+#include <memory>
 
 namespace {
     const unsigned int DEFAULT_BLOCK_LENGTH = 30;
@@ -16,12 +18,25 @@ namespace {
     }
 } // private
 
+#define DEFAULT_WINDOW_BLOCK_COUNT 10
+
 namespace VieVS {
     void SchedulerILP::initialize() noexcept {
+        unsigned int blockLength = getBlockLength(network_);
+        // TODO: This should be tunable
+        unsigned int windowLength = blockLength * DEFAULT_WINDOW_BLOCK_COUNT;
         try {
-            model_ = new Model(network_, sourceList_, getBlockLength(network_));
-        } catch(...) {
+            model_ = new Model(network_, sourceList_, blockLength, windowLength);
+        } catch(GRBException& e) {
+            (void) e;
             model_ = nullptr;
+        } catch(const std::exception& e) {
+            model_ = nullptr;
+#ifdef VIESCHEDPP_LOG
+            BOOST_LOG_TRIVIAL( error ) << e.what();
+#else
+            std::cout << "[error] " << e.what();
+#endif  
 #ifdef VIESCHEDPP_LOG
             BOOST_LOG_TRIVIAL( info ) << "Proceeding with default scheduler";
 #else
@@ -32,6 +47,7 @@ namespace VieVS {
     
     void SchedulerILP::start() noexcept {
         Scheduler::start();
+        model_->optimize(scans_);
     }
 
     void SchedulerILP::update( Scan &scan, std::ofstream &of ) noexcept {
