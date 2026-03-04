@@ -2,6 +2,8 @@
 #include <memory>
 #include <stdexcept>
 #include <tuple>
+#include <vector>
+#include "gurobi_c.h"
 
 #ifdef WITH_GUROBI
 #include "gurobi_c++.h"
@@ -9,6 +11,8 @@
 
 #include "Misc/TimeSystem.h"
 #include "Scan/PointingVector.h"
+
+#define UNREACHABLE std::logic_error((boost::format("unreachable: %d") % __LINE__).str())
 
 namespace {
 #ifdef WITH_GUROBI
@@ -132,7 +136,7 @@ namespace VieVS {
                         lhs += *var;
                     }
                 }
-                model_->addConstr(lhs <= 1);
+                model_->addConstr(lhs <= 1, "c0_exclusive");
                 count++;
             }
         }
@@ -160,7 +164,7 @@ namespace VieVS {
                             rhs += *var;
                         }
                     }
-                    model_->addConstr(lhs <= rhs);
+                    model_->addConstr(lhs <= rhs, "c1_pairwise");
                     count++;
 next_s:
                     (void) nullptr;
@@ -187,12 +191,12 @@ next_s:
                         } else goto next_b;
                         if(auto var = getVar(ModelKey::StaActive(this, q, s1, t))) {
                             rhs = *var;
-                        } else throw std::logic_error("unreachable");
-                        model_->addConstr(lhs <= rhs);
+                        } else throw UNREACHABLE;
+                        model_->addConstr(lhs <= rhs, "c2_baseline");
                         if(auto var = getVar(ModelKey::StaActive(this, q, s2, t))) {
                             rhs = *var;
-                        } else throw std::logic_error("unreachable");
-                        model_->addConstr(lhs <= rhs);
+                        } else throw UNREACHABLE;
+                        model_->addConstr(lhs <= rhs, "c2_baseline");
                         count += 2;
 next_b:
                         (void) nullptr;
@@ -222,7 +226,7 @@ next_b:
                             if(auto var = getVar(ModelKey::StaActive(this, q2, s, t2))) {
                                 lhs += *var;
                             } else goto next_t2;
-                            model_->addConstr(lhs <= 1);
+                            model_->addConstr(lhs <= 1, "c3_slew");
                             count++;
 next_t2:
                             (void) nullptr;
@@ -247,7 +251,7 @@ next_t1:
                 GRBLinExpr lhs, rhs;
                 if(auto var = getVar(ModelKey::StaCoverage(this, s, c))) {
                     lhs += *var;
-                } else throw std::logic_error("unreachable");
+                } else throw UNREACHABLE;
                 for(size_t t = 0; t < blockCount_; ++t) {
                     for(const auto q : sourceList_.getSources()) {
                         if(coverage_->calculateCell(this, t, q, s) != c) continue;
@@ -256,7 +260,7 @@ next_t1:
                         }
                     }
                 }
-                model_->addConstr(lhs <= rhs);
+                model_->addConstr(lhs <= rhs, "c4_coverage");
                 count++;
             }
         }
@@ -275,7 +279,7 @@ next_t1:
             for(size_t c = 0; c < coverage_->cellCount(); ++c) {
                 if(auto var = getVar(ModelKey::StaCoverage(this, s, c))) {
                     obj += (*var) * co;
-                } else throw std::logic_error("unreachable");
+                } else throw UNREACHABLE;
             }
         }
         model_->setObjective(obj, GRB_MAXIMIZE);
@@ -288,93 +292,31 @@ next_t1:
 #endif // WITH_GUROBI
     }
 
-    void Model::optimize(std::vector<Scan>& scans) {
-        // only explicitly set all variables to 0 if we have a starting point
-        if(!scans.empty()) {
-            GRBVar* vars = model_->getVars();
-            for(size_t i = 0; i < model_->get(GRB_IntAttr_NumVars); ++i) {
-                vars[i].set(GRB_DoubleAttr_Start, 0.0);
-            }
-        }
-        // populate starting values from given scans
-        for(const Scan& scan : scans) {
-            std::shared_ptr<const VieVS::AbstractSource> const q = sourceList_.getSource(scan.getSourceId());
-            const ScanTimes& scanTimes = scan.getTimes();
-            for(const Observation& obs : scan.getObservations()) {
-                const Baseline& b = network_.getBaseline(obs.getBlid());
-                // observation start blocks
-                size_t t10 = (scanTimes.getObservingTime(b.getStaid1()) + blockLength_ - 1) / blockLength_;
-                size_t t20 = (scanTimes.getObservingTime(b.getStaid2()) + blockLength_ - 1) / blockLength_;
-                // the number of blocks each station is observing
-                size_t t1f = t10 + scanTimes.getObservingDuration(b.getStaid1()) / blockLength_;
-                size_t t2f = t10 + scanTimes.getObservingDuration(b.getStaid2()) / blockLength_;
-                t1f = std::min(t1f, blockCount_);
-                t2f = std::min(t2f, blockCount_);
-                
-                for(size_t t = std::max(t10, t20); t < std::min(t1f, t2f); ++t) {
-                    if(auto var = getVar(ModelKey::BlnActive(this, q, b, t))) {
-                        var->set(GRB_DoubleAttr_Start, 1.0);
-                    } else if(t + 1 != std::min(t1f, t2f)) {
-                        throw std::logic_error("unreachable");
-                    }
-                }
-            }
-            for(unsigned long sId : scan.getStationIds()) {
-                const Station& s = network_.getStation(sId);
-                size_t t0 = (scanTimes.getObservingTime(sId) + blockLength_ - 1) / blockLength_;
-                size_t tf = t0 + scanTimes.getObservingDuration(sId) / blockLength_;
-                tf = std::min(tf, blockCount_);
-                for(size_t t = t0; t < tf; ++t) {
-                    if(auto var = getVar(ModelKey::StaActive(this, q, s, t))) {
-                        var->set(GRB_DoubleAttr_Start, 1.0);
-                    } else if(t + 1 != tf) {
-                        throw std::logic_error("unreachable");
-                    }
-                }
-            }
-        }
-        for(Station& s : network_.refStations()) {
-            for(size_t c = 0; c < coverage_->cellCount(); ++c) {
-                for(const auto q : sourceList_.getSources()) {
-                    for(size_t t = 0; t < blockCount_; ++t) {
-                        if(coverage_->calculateCell(this, t, q, s) != c) continue;
-                        if(auto var = getVar(ModelKey::StaActive(this, q, s, t))) {
-                            if(var->get(GRB_DoubleAttr_Start) > 0.0) {
-                                if(auto var = getVar(ModelKey::StaCoverage(this, s, c))) {
-                                    var->set(GRB_DoubleAttr_Start, 1.0);
-                                    goto next_c;
-                                } else throw std::logic_error("unreachable");
-                            }
-                        }
-                    }
-                }
-next_c:
-                (void) nullptr;
-            }
-        }
-
-        if(!scans.empty()) {
-#ifdef VIESCHEDPP_LOG
-        BOOST_LOG_TRIVIAL( info ) << "Loaded preliminary result into ILP model";
-#else
-        std::cout << "[info] Loaded preliminary result into ILP model";
-#endif
-        }
-
-
+    bool Model::optimize(void) {
+        model_->update();
         model_->optimize();
+
+        if(model_->get(GRB_IntAttr_Status) != GRB_OPTIMAL) {
+#ifdef VIESCHEDPP_LOG
+            BOOST_LOG_TRIVIAL( info ) << "No optimal solution found";
+#else
+            std::cout << "[info] No optimal solution found";
+#endif
+            return false;
+        }
 
 #ifdef VIESCHEDPP_LOG
         BOOST_LOG_TRIVIAL( info ) << "Completed optimization";
 #else
         std::cout << "[info] Completed optimization";
 #endif
-        // TODO: update scans
+        return true;
     }
 
-    void Model::optimize(void) {
-        std::vector<Scan> scans;
-        Model::optimize(scans);
+    std::vector<Scan> Model::optimize(std::vector<Scan>& scans) {
+        Model::loadScans(scans);
+        if(!Model::optimize()) return {};
+        return Model::readScans();
     }
 }
 
@@ -465,7 +407,7 @@ namespace VieVS {
 
     GRBVar& Model::addVar(const ModelKey& key, double lb, double ub, double obj, char vtype) {
         auto ret = var_.insert(std::make_pair(key, model_->addVar(lb, ub, obj, vtype)));
-        if(!ret.second) throw std::logic_error("unreachable");
+        if(!ret.second) throw UNREACHABLE;
         return ret.first->second;
     }
 
@@ -483,7 +425,7 @@ namespace VieVS {
             case ModelKey::ModelKeyType::sta_coverage:
                 if(key.sta_coverage.s != other.key.sta_coverage.s) return key.sta_coverage.s < other.key.sta_coverage.s;
                 return key.sta_coverage.c < other.key.sta_coverage.c;
-            default: throw std::logic_error("unreachable");
+            default: throw UNREACHABLE;
         }
     }
 
@@ -515,6 +457,97 @@ namespace VieVS {
         key.key.sta_coverage.s = model->sta2idx_.at(s.getId());
         key.key.sta_coverage.c = c;
         return key;
+    }
+
+    void Model::loadScans(const std::vector<Scan>& scans) {
+        if(scans.empty()) {
+#ifdef VIESCHEDPP_LOG
+            BOOST_LOG_TRIVIAL( info ) << "Skipped loading MIP solution. No scans provided";
+#else
+            std::cout << "[info] Skipped loading MIP solution. No scans provided";
+#endif 
+            return;
+        }
+
+        // only explicitly set all variables to 0 if we have a starting point
+        GRBVar* vars = model_->getVars();
+        for(size_t i = 0; i < model_->get(GRB_IntAttr_NumVars); ++i) {
+            vars[i].set(GRB_DoubleAttr_Start, 0.0);
+        }
+
+        // populate starting values from given scans
+        for(const Scan& scan : scans) {
+            std::shared_ptr<const VieVS::AbstractSource> const q = sourceList_.getSource(scan.getSourceId());
+            const ScanTimes& scanTimes = scan.getTimes();
+            for(const Observation& obs : scan.getObservations()) {
+                const Baseline& b = network_.getBaseline(obs.getBlid());
+                // observation start blocks
+                size_t t10 = (scanTimes.getObservingTime(b.getStaid1()) + blockLength_ - 1) / blockLength_;
+                size_t t20 = (scanTimes.getObservingTime(b.getStaid2()) + blockLength_ - 1) / blockLength_;
+                // the number of blocks each station is observing
+                size_t t1f = t10 + scanTimes.getObservingDuration(b.getStaid1()) / blockLength_;
+                size_t t2f = t10 + scanTimes.getObservingDuration(b.getStaid2()) / blockLength_;
+                t1f = std::min(t1f, blockCount_);
+                t2f = std::min(t2f, blockCount_);
+                
+                for(size_t t = std::max(t10, t20); t < std::min(t1f, t2f); ++t) {
+                    if(auto var = getVar(ModelKey::BlnActive(this, q, b, t))) {
+                        var->set(GRB_DoubleAttr_Start, 1.0);
+                    } else if(t + 1 != std::min(t1f, t2f)) {
+                        throw UNREACHABLE;
+                    }
+                }
+            }
+
+            for(unsigned long sId : scan.getStationIds()) {
+                const Station& s = network_.getStation(sId);
+                size_t t0 = (scanTimes.getObservingTime(sId) + blockLength_ - 1) / blockLength_;
+                size_t tf = t0 + scanTimes.getObservingDuration(sId) / blockLength_;
+                tf = std::min(tf, blockCount_);
+                for(size_t t = t0; t < tf; ++t) {
+                    if(auto var = getVar(ModelKey::StaActive(this, q, s, t))) {
+                        var->set(GRB_DoubleAttr_Start, 1.0);
+                    } else if(t + 1 != tf) {
+                        // TODO: Sometimes throws
+                        std::cout << "t = " << t << ", tf = " << tf << ", t0 = " << t0 << std::endl;
+                        throw UNREACHABLE;
+                    }
+                }
+            }
+        }
+
+        model_->update();
+
+        for(Station& s : network_.refStations()) {
+            for(size_t c = 0; c < coverage_->cellCount(); ++c) {
+                for(const auto q : sourceList_.getSources()) {
+                    for(size_t t = 0; t < blockCount_; ++t) {
+                        if(coverage_->calculateCell(this, t, q, s) != c) continue;
+                        if(auto var = getVar(ModelKey::StaActive(this, q, s, t))) {
+                            if(var->get(GRB_DoubleAttr_Start) > 0.0) {
+                                if(auto var = getVar(ModelKey::StaCoverage(this, s, c))) {
+                                    var->set(GRB_DoubleAttr_Start, 1.0);
+                                    goto next_c;
+                                } else throw UNREACHABLE;
+                            }
+                        }
+                    }
+                }
+next_c:
+                (void) nullptr;
+            }
+        }
+
+#ifdef VIESCHEDPP_LOG
+        BOOST_LOG_TRIVIAL( info ) << "Loaded preliminary result into ILP model";
+#else
+        std::cout << "[info] Loaded preliminary result into ILP model";
+#endif
+    }
+
+    std::vector<Scan> Model::readScans(void) const noexcept {
+        // TODO: implement
+        return {};
     }
 #endif // WITH_GUROBI
 }

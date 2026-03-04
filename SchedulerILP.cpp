@@ -47,7 +47,33 @@ namespace VieVS {
     
     void SchedulerILP::start() noexcept {
         Scheduler::start();
-        model_->optimize(scans_);
+        std::vector<Scan> scansOptimal = model_->optimize(scans_);
+        if(scansOptimal.empty()) {
+#ifdef VIESCHEDPP_LOG
+            BOOST_LOG_TRIVIAL( info ) << "Reverting to previous solution";
+#else
+            std::cout << "[info] Reverting to previous solution";
+#endif
+            return;
+        }
+
+        scans_ = scansOptimal;
+
+        updateObservingTimes();
+
+        // check if there was an error during the session
+        std::ofstream of;
+        of.open( path_ + "ilp_statistics_check.log" );
+        if ( !checkAndStatistics( of ) ) {
+#ifdef VIESCHEDPP_LOG
+            BOOST_LOG_TRIVIAL( error ) << "error(s) found while checking the schedule";
+#else
+            cout << "[error] error(s) found while checking the schedule";
+#endif
+        }
+        of.close();
+
+        sortSchedule( Timestamp::start );
     }
 
     void SchedulerILP::update( Scan &scan, std::ofstream &of ) noexcept {
