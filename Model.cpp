@@ -206,7 +206,7 @@ next_t1:
         for(const Station& s : network_.refStations()) {
             for(size_t c = 0; c < SKY_COVERAGE_CELL_COUNT; ++c) {
                 if(auto var = getVar(ModelKey::Coverage(this, s, c))) {
-                    obj += *var;
+                    obj += (*var) * co;
                 } else throw std::logic_error("unreachable");
             }
         }
