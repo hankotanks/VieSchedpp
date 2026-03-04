@@ -3,6 +3,8 @@
 #include <exception>
 #include <memory>
 
+#include "Source/AbstractSource.h"
+
 namespace {
     const unsigned int DEFAULT_BLOCK_LENGTH = 30;
 
@@ -47,6 +49,8 @@ namespace VieVS {
     
     void SchedulerILP::start() noexcept {
         Scheduler::start();
+
+        // compute optimal scans from the ILP model
         std::vector<Scan> scansOptimal = model_->optimize(scans_);
         if(scansOptimal.empty()) {
 #ifdef VIESCHEDPP_LOG
@@ -57,33 +61,50 @@ namespace VieVS {
             return;
         }
 
+        // replace old scans with them
         scans_.clear();
         scans_.insert(scans_.end(), scansOptimal.begin(), scansOptimal.end());
 
+        // clear all the statistics from the greedy run
+        for(Station& s : network_.refStations()) {
+            s.setStatistics(Station::Statistics());
+        }
+        for(std::shared_ptr<VieVS::AbstractSource> q : sourceList_.refSources()) {
+            q->setStatistics(AbstractSource::Statistics());
+        }
+
         sortSchedule( Timestamp::start );
 
-        // TODO: remove this debug block
+        std::string fileName = getName() + "_iteration_ilp.txt";
+        std::ofstream of;
+        of.open( path_ + fileName );
+
+        // TODO: This currently causes rare slew time violations
 #if 0
-        for(const Station& s : network_.getStations()) {
-            size_t count = 0;
-            std::cout << s.getName() << ": ";
-            for(const Scan& scan : scans_) {
-                if(scan.findIdxOfStationId(s.getId())) {
-                    std::cout << scan.getSourceId() << "[" << scan.getTimes().getScanTime() / 60 << "], ";
-                    ++count;
+        if ( parameters_.idleToObservingTime ) {
+            switch ( ScanTimes::getAlignmentAnchor() ) {
+                case ScanTimes::AlignmentAnchor::start: {
+                    idleToScanTime( Timestamp::end, of );
+                    break;
                 }
+                case ScanTimes::AlignmentAnchor::end: {
+                    idleToScanTime( Timestamp::start, of );
+                    break;
+                }
+                case ScanTimes::AlignmentAnchor::individual: {
+                    idleToScanTime( Timestamp::end, of );
+                    idleToScanTime( Timestamp::start, of );
+                    break;
+                }
+                default:
+                    break;
             }
-            std::cout << std::endl;
-            std::cout << s.getName() << ": " << count << std::endl;
         }
-        std::cout << "length: " << scans_.size() << std::endl;
-#endif 
+#endif
 
         updateObservingTimes();
 
-        // check if there was an error during the session
-        std::ofstream of;
-        of.open( path_ + "ilp_statistics_check.log" );
+        // check if there was an error during the session (and append to the output log)
         if ( !checkAndStatistics( of ) ) {
 #ifdef VIESCHEDPP_LOG
             BOOST_LOG_TRIVIAL( error ) << "error(s) found while checking the schedule";
@@ -92,8 +113,6 @@ namespace VieVS {
 #endif
         }
         of.close();
-
-        sortSchedule( Timestamp::start );
     }
 
     void SchedulerILP::update( Scan &scan, std::ofstream &of ) noexcept {

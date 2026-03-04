@@ -197,7 +197,7 @@ private:
             std::shared_ptr<const VieVS::AbstractSource> const q, 
             Station& s, size_t t) noexcept;
 
-        Scan finish(const Model* model) const noexcept;
+        Scan finish(const Model* model, const std::vector<unsigned int>& slewTime) const noexcept;
     };
 
     class ActiveScans {

@@ -1,4 +1,5 @@
 #include "Model.h"
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <tuple>
@@ -322,11 +323,10 @@ next_t1:
 
         if(!Model::optimize()) return {};
 
-        std::cout << "Optimized" << std::endl;
-        Model::dump(GRB_DoubleAttr_X);
+        // std::cout << "Optimized" << std::endl;
+        // Model::dump(GRB_DoubleAttr_X);
 
-        std::vector<Scan> scansOptimized = Model::readScans();
-        return scansOptimized;
+        return Model::readScans();
     }
 }
 
@@ -601,7 +601,7 @@ next_c:
         }
     }
 
-    Scan Model::ScanBuilder::finish(const Model* model) const noexcept {
+    Scan Model::ScanBuilder::finish(const Model* model, const std::vector<unsigned int>& slewTime) const noexcept {
         std::vector<PointingVector> pointingVectors;
         std::vector<PointingVector> pointingVectorsEnd;
         std::vector<unsigned int> endOfLastScan;
@@ -626,8 +626,27 @@ next_c:
             pointingVectorsEnd.push_back(pve);
         }
 
+        unsigned int scanStart = std::numeric_limits<unsigned int>::max();
+
+        std::vector<unsigned int> fieldSystemTime;
+        std::vector<unsigned int> preob;
+        std::vector<unsigned int> observingTimes;
+
+        for(size_t i = 0; i < pointingVectors.size(); ++i) {
+            const PointingVector& pv0 = pointingVectors[i];
+            const PointingVector& pve = pointingVectorsEnd[i];
+            const Station& s = model->network_.getStation(pv0.getStaid());
+
+            scanStart = std::min(scanStart, pv0.getTime());
+
+            fieldSystemTime.push_back(s.getPARA().systemDelay);
+            preob.push_back(s.getPARA().preob);
+            observingTimes.push_back(pve.getTime() - pv0.getTime());
+        }
+
         Scan scan(pointingVectors, endOfLastScan, Scan::ScanType::standard);
         scan.setPointingVectorsEndtime(pointingVectorsEnd);
+        scan.setScanTimes(endOfLastScan, fieldSystemTime, slewTime, preob, scanStart, observingTimes);
 
         return scan;
     }
@@ -648,7 +667,7 @@ next_c:
 
         scans_.emplace_back(scan);
     }
-        
+
     void Model::ActiveScans::updateScans(std::vector<Scan>& scans, size_t t) {
         std::vector<size_t> remove;
         for(size_t i = 0, j = 0; i < scans_.size(); ++i, j = 0) {
@@ -658,7 +677,27 @@ next_c:
             }
 
             if(j < 2) {
-                Scan scan = scans_[i].finish(model_);
+                std::vector<unsigned int> scanTime;
+                for(const auto& sEntryInner : scans_[i].sData) {
+                    const Station& s = model_->network_.getStation(sEntryInner.first);
+                    if(scans.empty()) {
+                        scanTime.push_back(0);
+                    } else {
+                        boost::optional<PointingVector> pv0 = boost::none;
+                        for(size_t i = scans.size(); i-- > 0;) {
+                            if(auto j = scans[i].findIdxOfStationId(sEntryInner.first)) {
+                                pv0 = scans[i].getPointingVector(*j, Timestamp::end);
+                                break;
+                            }
+                        }
+                        unsigned int slew = 0;
+                        if(pv0) {
+                            slew = s.getAntenna().slewTime(*pv0, sEntryInner.second.first);
+                        }
+                        scanTime.push_back(slew);
+                    }
+                }
+                Scan scan = scans_[i].finish(model_, scanTime);
                 scans.emplace_back(scan);
                 remove.emplace_back(i);
             }
