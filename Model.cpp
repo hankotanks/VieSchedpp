@@ -315,7 +315,11 @@ next_t1:
 
     std::vector<Scan> Model::optimize(std::vector<Scan>& scans) {
         Model::loadScans(scans);
+        std::cout << "Initial:" << std::endl;
+        Model::dump(GRB_DoubleAttr_Start);
         if(!Model::optimize()) return {};
+        std::cout << "Optimized" << std::endl;
+        Model::dump(GRB_DoubleAttr_X);
         return Model::readScans();
     }
 }
@@ -368,11 +372,11 @@ namespace VieVS {
         PointingVector pv0(s.getId(), q->getId());
         pv0.setTime(t * blockLength_);
         s.calcAzEl_rigorous( q, pv0);
-        if(!s.isVisible(pv0)) return false;
+        if(!s.isVisible(pv0, q->getPARA().minElevation)) return false;
         PointingVector pvf(s.getId(), q->getId());
         pvf.setTime((t + 1) * blockLength_);
         s.calcAzEl_rigorous( q, pvf);
-        return s.isVisible(pvf);
+        return s.isVisible(pvf, q->getPARA().minElevation);
     }
 
     size_t Model::calculateSlewTime(Station& s, 
@@ -479,6 +483,8 @@ namespace VieVS {
         for(const Scan& scan : scans) {
             std::shared_ptr<const VieVS::AbstractSource> const q = sourceList_.getSource(scan.getSourceId());
             const ScanTimes& scanTimes = scan.getTimes();
+            
+            // populate BlnActive variables
             for(const Observation& obs : scan.getObservations()) {
                 const Baseline& b = network_.getBaseline(obs.getBlid());
                 // observation start blocks
@@ -499,8 +505,9 @@ namespace VieVS {
                 }
             }
 
+            // populate StaActive variables
             for(unsigned long sId : scan.getStationIds()) {
-                const Station& s = network_.getStation(sId);
+                Station& s = network_.refStation(sId);
                 size_t t0 = (scanTimes.getObservingTime(sId) + blockLength_ - 1) / blockLength_;
                 size_t tf = t0 + scanTimes.getObservingDuration(sId) / blockLength_;
                 tf = std::min(tf, blockCount_);
@@ -508,9 +515,16 @@ namespace VieVS {
                     if(auto var = getVar(ModelKey::StaActive(this, q, s, t))) {
                         var->set(GRB_DoubleAttr_Start, 1.0);
                     } else if(t + 1 != tf) {
-                        // TODO: Sometimes throws
-                        std::cout << "t = " << t << ", tf = " << tf << ", t0 = " << t0 << std::endl;
-                        throw UNREACHABLE;
+#ifdef VIESCHEDPP_LOG
+                        BOOST_LOG_TRIVIAL( warning ) << q->getName() << "is not visible by " << s.getName() << 
+                            " for the last " << (tf - 1) << " out of " << tf << " time segments";
+#else
+                        std::cout << "[warning] " << q->getName() << "is not visible by " << s.getName() << 
+                            " for the last " << (tf - 1) << " out of " << tf << " time segments";
+#endif
+                        break;
+                        // TODO: Consider if this is actually acceptable
+                        // throw UNREACHABLE;
                     }
                 }
             }
@@ -518,6 +532,7 @@ namespace VieVS {
 
         model_->update();
 
+        // populate StaConverage variables
         for(Station& s : network_.refStations()) {
             for(size_t c = 0; c < coverage_->cellCount(); ++c) {
                 for(const auto q : sourceList_.getSources()) {
@@ -545,9 +560,106 @@ next_c:
 #endif
     }
 
+#if 0
+    void Model::activeScanAppend(std::vector<Scan>& scansActive, 
+        std::shared_ptr<const VieVS::AbstractSource> const q, 
+        const Station& s, size_t t) const noexcept {
+        bool found = false;
+        for(Scan& scan : scansActive) {
+            std::vector<unsigned long> sIds = scan.getStationIds();
+            if(std::find(sIds.begin(), sIds.end(), s.getId()) == sIds.end()) continue;
+            Scan()
+        }
+    }   
+#endif
+
+    bool Model::ScanBuilder::append(const Model* model, std::shared_ptr<const VieVS::AbstractSource> const q, 
+        const Station& s, size_t t) noexcept {
+        if(qId != q->getId()) return false;
+        try {
+            size_t& eols = sData.at(s.getId()).second;
+            if(eols == t) {
+                ++eols;
+                return true;
+            }
+            return false;
+        } catch(...) {
+            PointingVector pv(s.getId(), qId);
+            pv.setTime(t * model->blockLength_);
+            sData.insert(std::make_pair(s.getId(), std::make_pair(pv, t + 1)));
+            return true;
+        }
+    }
+
+    Scan Model::ScanBuilder::finish(const Model* model) const noexcept {
+        // TODO
+    }
+
+    bool Model::ActiveScans::append(std::shared_ptr<const VieVS::AbstractSource> const q, 
+        const Station& s, size_t t) noexcept {
+        // TODO
+    }
+        
+    void Model::ActiveScans::updateScans(std::vector<Scan>& scans, size_t t) {
+        std::vector<size_t> remove;
+        for(size_t i = 0; i < scans_.size(); ++i) {
+            bool ongoing = false;
+            for(const auto& sEntry : scans_[i].sData) {
+                const auto& sData = sEntry.second;
+                if(sData.second == t) {
+                    ongoing = true;
+                    break;
+                }
+            }
+            if(!ongoing) {
+                Scan scan = scans_[i].finish(model_);
+                scans.emplace_back(scan);
+                remove.emplace_back(i);
+            }
+        }
+
+        std::reverse(remove.begin(), remove.end());
+        for(size_t i : remove) {
+            scans_.erase(scans_.begin() + i);
+        }
+    }
+
     std::vector<Scan> Model::readScans(void) const noexcept {
-        // TODO: implement
-        return {};
+        std::vector<Scan> scans;
+
+        Model::ActiveScans scansActive(this);
+        for(size_t t = 0; t < blockCount_; ++t) {
+            for(const Station& s : network_.getStations()) {
+                for(const auto q : sourceList_.getSources()) {
+                    if(auto var = getVar(ModelKey::StaActive(this, q, s, t))) {
+                        if(var->get(GRB_DoubleAttr_X) < 0.5) continue;
+                        scansActive.append(q, s, t);
+                    }
+                }
+            }
+            scansActive.updateScans(scans, t);
+        }
+        return scans;
+    }
+
+    void Model::dump(GRB_DoubleAttr attr) const noexcept {
+        for(const Station& s : network_.getStations()) {
+            std::cout << s.getName() << std::endl;
+            for(size_t t = 0; t < blockCount_; ++t) {
+                for(const auto q : sourceList_.getSources()) {
+                    if(auto var = getVar(ModelKey::StaActive(this, q, s, t))) {
+                        if(var->get(attr) > 0.0) {
+                            std::cout << 'X';
+                            goto next_t;
+                        }
+                    }
+                }
+                std::cout << " ";
+next_t:
+                (void) nullptr;
+            }
+            std::cout << std::endl;
+        }
     }
 #endif // WITH_GUROBI
 }

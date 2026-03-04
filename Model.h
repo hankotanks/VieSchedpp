@@ -189,8 +189,36 @@ private:
     GRBVar& addVar(const ModelKey& key, double lb, double ub, double obj, char vtype);
 
 private:
+    struct ScanBuilder {
+        unsigned long qId;
+        std::map<unsigned long, std::pair<PointingVector, size_t>> sData;
+
+        bool append(const Model* model, 
+            std::shared_ptr<const VieVS::AbstractSource> const q, 
+            const Station& s, size_t t) noexcept;
+
+        Scan finish(const Model* model) const noexcept;
+    };
+
+    class ActiveScans {
+    private:
+        std::vector<ScanBuilder> scans_;
+        const Model* model_;
+    public:
+        ActiveScans(const Model* model) : model_(model) { /* STUB */ }
+
+        bool append(std::shared_ptr<const VieVS::AbstractSource> const q, 
+            const Station& s, size_t t) noexcept;
+        
+        void updateScans(std::vector<Scan>& scans, size_t t);
+    };
+
+private:
     void loadScans(const std::vector<Scan>& scans);
     std::vector<Scan> readScans(void) const noexcept;
+
+private:
+    void dump(GRB_DoubleAttr attr) const noexcept;
 
 private:
     std::map<ModelKey, GRBVar> var_;
