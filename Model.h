@@ -201,7 +201,7 @@ private:
     };
 
     class ActiveScans {
-    public: // TODO: make private
+    private: // TODO: make private
         std::vector<ScanBuilder> scans_;
         const Model* model_;
     public:

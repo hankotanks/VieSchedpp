@@ -41,7 +41,6 @@
 
 #include "Initializer.h"
 #include "Model.h"
-#include "Station/Network.h"
 #include "Scheduler.h"
 
 namespace VieVS {
@@ -66,27 +65,8 @@ public:
     * @param path path to VieSchedpp.xml file
     * @param fname file name
     */
-    SchedulerILP( Initializer &init, std::string path, std::string fname ) : 
-        Scheduler(init, path, fname) { SchedulerILP::initialize(); }
-
-
-    /**
-    * @brief constructor
-    * @author Hank Lewis
-    *
-    * @param name session name
-    * @param path session path
-    * @param network_ station network
-    * @param sourceList source list
-    * @param scans list of scans
-    * @param xml VieSchedpp.xml file
-    */
-    SchedulerILP( std::string name, std::string path, Network network, SourceList sourceList,
-            std::vector<Scan> scans,
-            boost::property_tree::ptree xml, std::shared_ptr<ObservingMode> obsModes = nullptr ) : 
-        Scheduler(name, path, network, sourceList, scans, xml, obsModes) { 
-            SchedulerILP::initialize(); 
-        }
+    SchedulerILP( Initializer &init, std::string path, std::string fname, std::ofstream& statisticsOf ) : 
+        Scheduler(init, path, fname), statisticsOf_(statisticsOf) { SchedulerILP::initialize(); }
 
     ~SchedulerILP() {
         if(model_) delete model_;
@@ -114,8 +94,10 @@ public:
      * @param of output stream
      */
      void statistics( std::ofstream &of ) override;
+
 private:
      Model* model_ = nullptr;
+     std::ofstream& statisticsOf_;
 };
 }
 #endif // SCHEDULER_ILP_H

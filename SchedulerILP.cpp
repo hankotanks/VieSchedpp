@@ -3,6 +3,8 @@
 #include <exception>
 #include <memory>
 
+#include "Output/Output.h"
+#include "Scheduler.h"
 #include "Source/AbstractSource.h"
 
 namespace {
@@ -50,6 +52,22 @@ namespace VieVS {
     void SchedulerILP::start() noexcept {
         Scheduler::start();
 
+        for(SkyCoverage& sky : network_.refSkyCoverages()) {
+            sky.calculateSkyCoverageScores();
+        }
+
+        { // create output
+            VieVS::Scheduler temp(this);
+            VieVS::Output output(temp);
+            output.writeStatistics(statisticsOf_);
+            ++version_;
+#ifdef VIESCHEDPP_LOG
+            BOOST_LOG_TRIVIAL( info ) << "Output initial solution's statistics";
+#else
+            std::cout << "[info] Output initial solution's statistics";
+#endif
+        }
+       
         // compute optimal scans from the ILP model
         std::vector<Scan> scansOptimal = model_->optimize(scans_);
         if(scansOptimal.empty()) {
@@ -64,6 +82,7 @@ namespace VieVS {
         // replace old scans with them
         scans_.clear();
         scans_.insert(scans_.end(), scansOptimal.begin(), scansOptimal.end());
+        sortSchedule( Timestamp::start );
 
         // clear all the statistics from the greedy run
         for(Station& s : network_.refStations()) {
@@ -73,7 +92,20 @@ namespace VieVS {
             q->setStatistics(AbstractSource::Statistics());
         }
 
-        sortSchedule( Timestamp::start );
+        const std::map<unsigned long, unsigned long>& staids2skyCoverageId = network_.getStaid2skyCoverageId();
+        for(const Station& s : network_.getStations()) {
+            SkyCoverage& sky = network_.refSkyCoverage(staids2skyCoverageId.at(s.getId()));
+            sky.clearObservations();
+
+            for(const Scan& scan : scans_) {
+                if(auto i = scan.findIdxOfStationId(s.getId())) {
+                    const PointingVector& pv0 = scan.getPointingVector(*i);
+                    sky.update(pv0);
+                }   
+            }
+
+            sky.calculateSkyCoverageScores();
+        }
 
         std::string fileName = getName() + "_iteration_ilp.txt";
         std::ofstream of;

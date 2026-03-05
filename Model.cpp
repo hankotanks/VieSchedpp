@@ -83,7 +83,7 @@ namespace VieVS {
         }
 
 #ifdef VIESCHEDPP_LOG
-        BOOST_LOG_TRIVIAL( info ) << "Added " << count << " StaActive variables to model";
+        BOOST_LOG_TRIVIAL( info ) << "Added " << count << " station activity variables to model";
 #else
         std::cout << "[info] Added " << count << " StaActive variables to model";
 #endif
@@ -104,7 +104,7 @@ namespace VieVS {
         }
 
 #ifdef VIESCHEDPP_LOG
-        BOOST_LOG_TRIVIAL( info ) << "Added " << count << " BlnActive variables to model";
+        BOOST_LOG_TRIVIAL( info ) << "Added " << count << " baseline activity variables to model";
 #else
         std::cout << "[info] Added " << count << " BlnActive variables to model";
 #endif
@@ -119,7 +119,7 @@ namespace VieVS {
         }
 
 #ifdef VIESCHEDPP_LOG
-        BOOST_LOG_TRIVIAL( info ) << "Added " << count << " StaCoverage variables to model";
+        BOOST_LOG_TRIVIAL( info ) << "Added " << count << " sky coverage variables to model";
 #else
         std::cout << "[info] Added " << count << " StaCoverage variables to model";
 #endif
@@ -644,10 +644,30 @@ next_c:
             observingTimes.push_back(pve.getTime() - pv0.getTime());
         }
 
+        std::vector<Observation> obs;
+        for(size_t i = 0; i < pointingVectors.size(); ++i) {
+            const PointingVector& pvi = pointingVectors[i];
+
+            for(size_t j = i + 1; j < pointingVectors.size(); ++j) {
+                const PointingVector& pvj = pointingVectors[j];
+                
+                const std::pair<unsigned long, unsigned long> staids(pvi.getStaid(), pvj.getStaid());
+                unsigned long blid = model->network_.getBaseline(staids).getId();
+
+                unsigned int startTime = std::max(pvi.getTime(), pvj.getTime());
+                unsigned int endTime = std::min(pointingVectorsEnd[i].getTime(), pointingVectorsEnd[j].getTime());
+                if(startTime >= endTime) continue;
+                unsigned int observingTime = endTime - startTime;
+
+                obs.emplace_back(blid, pvi.getStaid(), pvj.getStaid(), qId, startTime, observingTime);
+            }
+        }
+
         Scan scan(pointingVectors, endOfLastScan, Scan::ScanType::standard);
         scan.setPointingVectorsEndtime(pointingVectorsEnd);
         scan.setScanTimes(endOfLastScan, fieldSystemTime, slewTime, preob, scanStart, observingTimes);
-
+        scan.setObservations(obs);
+        
         return scan;
     }
 
