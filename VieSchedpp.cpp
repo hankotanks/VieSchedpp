@@ -290,7 +290,7 @@ void VieSchedpp::run(const bool ILP) {
 
             try {
                 VieVS::Scheduler* scheduler = ILP 
-                    ? new VieVS::GlobalOptScheduler( newInit, path_, fname )
+                    ? new VieVS::SchedulerILP( newInit, path_, fname, statisticsOf )
                     : new VieVS::Scheduler( newInit, path_, fname );
                 scheduler->start();
 

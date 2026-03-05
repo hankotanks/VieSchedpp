@@ -24,11 +24,30 @@
  */
 
 #include "Scheduler.h"
+#include "Misc/VieVS_NamedObject.h"
 
 
 using namespace std;
 using namespace VieVS;
 unsigned long Scheduler::nextId = 0;
+
+Scheduler::Scheduler( const Scheduler* other ) : VieVS_NamedObject(*other),
+    version_(other->version_),
+    path_(other->path_),
+    xml_(other->xml_),
+    sourceList_(other->sourceList_),
+    network_(other->network_),
+    obsModes_(other->obsModes_),
+    currentObservingMode_(other->currentObservingMode_),
+    scans_(other->scans_),
+    parameters_(other->parameters_),
+    preCalculated_(other->preCalculated_),
+    nSingleScansConsidered(other->nSingleScansConsidered),
+    nSubnettingScansConsidered(other->nSubnettingScansConsidered),
+    nObservationsConsidered(other->nObservationsConsidered),
+    himp_(other->himp_),
+    calib_(other->calib_),
+    multiSchedulingParameters_(other->multiSchedulingParameters_) { /* STUB */ }
 
 
 Scheduler::Scheduler( Initializer &init, string path, string fname )

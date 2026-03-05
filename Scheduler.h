@@ -98,6 +98,11 @@ class Scheduler : public VieVS_NamedObject {
         std::vector<std::vector<int>> subnettingSrcIds;  ///< list of all available second sources in subnetting
     };
 
+    /**
+     * @brief copy constructor
+     * @author Hank Lewis
+     */
+    Scheduler( const Scheduler* other );
 
     /**
      * @brief constructor
