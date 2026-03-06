@@ -101,7 +101,7 @@ class VieSchedpp {
      * @brief start VieSched++
      * @author Matthias Schartner
      */
-    void run(const bool ILP = false);
+    void run(void);
 
 
    private:

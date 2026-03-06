@@ -49,7 +49,7 @@ VieSchedpp::VieSchedpp( const std::string &inputFile ) : inputFile_{ inputFile }
 }
 
 
-void VieSchedpp::run(const bool ILP) {
+void VieSchedpp::run(void) {
     init_log();
 
     string versionNr = util::version();
@@ -67,10 +67,10 @@ void VieSchedpp::run(const bool ILP) {
 
 // open headerlog and statistics file
 #ifdef VIESCHEDPP_LOG
-    BOOST_LOG_TRIVIAL( info ) << "start initializing " << (ILP ? "ILP " : "") << "scheduler";
+    BOOST_LOG_TRIVIAL( info ) << "start initializing scheduler";
     BOOST_LOG_TRIVIAL( info ) << "writing initializer output to: initializer.txt";
 #else
-    cout << "[info] start initializing " << (ILP ? "ILP " : "") << "scheduler";
+    cout << "[info] start initializing scheduler";
     cout << "[info] writing initializer output to: initializer.txt";
 #endif
 
@@ -289,9 +289,18 @@ void VieSchedpp::run(const bool ILP) {
             }
 
             try {
-                VieVS::Scheduler* scheduler = ILP 
-                    ? new VieVS::SchedulerILP( newInit, path_, fname, statisticsOf )
-                    : new VieVS::Scheduler( newInit, path_, fname );
+                bool ilp = false;
+                if( auto val = xml_.get_optional<bool>( "VieSchedpp.general.ilp" )) {
+                    ilp = *val;
+                }
+                
+                VieVS::Scheduler* scheduler;
+                if(ilp) {
+                    scheduler = new VieVS::SchedulerILP( newInit, path_, fname, statisticsOf );
+                } else {
+                    scheduler = new VieVS::Scheduler( newInit, path_, fname );
+                }
+
                 scheduler->start();
 
                 // create output

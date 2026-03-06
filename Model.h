@@ -141,7 +141,9 @@ private:
     size_t blockCount_;
     // the size of each time segment (in seconds)
     unsigned int blockLength_;
-    // number of segments in the sliding optimization window
+    // number of optimization windows
+    size_t windowCount_;
+    // number of segments in each window
     size_t windowBlockCount_;
     // the length of the sliding optimization window (in seconds)
     unsigned int windowLength_;
@@ -201,7 +203,7 @@ private:
     };
 
     class ActiveScans {
-    private: // TODO: make private
+    private:
         std::vector<ScanBuilder> scans_;
         const Model* model_;
     public:

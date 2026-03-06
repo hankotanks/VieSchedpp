@@ -47,11 +47,28 @@ namespace {
 namespace VieVS {
     Model::Model(VieVS::Network& network, VieVS::SourceList& sourceList, unsigned int blockLength, unsigned int windowLength) : 
         network_(network), sourceList_(sourceList), 
-        blockLength_(blockLength), blockCount_(TimeSystem::duration / blockLength - 1),
-        windowLength_(windowLength), windowBlockCount_((windowLength + blockLength - 1) / blockLength) {
+        blockLength_(blockLength), 
+        blockCount_(TimeSystem::duration / blockLength - 1),
+        windowLength_(windowLength), 
+        windowBlockCount_((windowLength + blockLength - 1) / blockLength),
+        windowCount_((windowLength + TimeSystem::duration - blockLength * 3 - 1) / (windowLength - 1)) {
         coverage_ = std::make_unique<ModelCoverage13>();
 #ifdef WITH_GUROBI
         initGurobi(env_, model_);
+
+#ifdef VIESCHEDPP_LOG
+        BOOST_LOG_TRIVIAL( info ) << "time segments = " << blockCount_;
+        BOOST_LOG_TRIVIAL( info ) << "scan length [sec] = " << blockLength_;
+        BOOST_LOG_TRIVIAL( info ) << "optimization steps = " << windowCount_;
+        BOOST_LOG_TRIVIAL( info ) << "optimization window length [sec] = " << windowLength_;
+        BOOST_LOG_TRIVIAL( info ) << "time segments per window = " << windowBlockCount_;
+#else
+        std::cout << "[info] time segments = " << blockCount_;
+        std::cout << "[info] scan length [sec] = " << blockLength_;
+        std::cout << "[info] optimization steps = " << windowBlockCount_;
+        std::cout << "[info] optimization window length [sec] = " << windowLength_;
+        std::cout << "[info] time segments per window = " << windowBlockCount_;
+#endif  
 
         // build sta2idx_
         for(const Station& s : network_.getStations()) {
@@ -296,6 +313,9 @@ next_t1:
 
     bool Model::optimize(void) {
         model_->update();
+        
+        // TODO: sliding window optimization
+        
         model_->optimize();
 
         if(model_->get(GRB_IntAttr_Status) != GRB_OPTIMAL) {

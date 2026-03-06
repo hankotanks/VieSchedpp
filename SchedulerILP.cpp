@@ -2,14 +2,13 @@
 
 #include <exception>
 #include <memory>
+#include <stdexcept>
 
 #include "Output/Output.h"
 #include "Scheduler.h"
 #include "Source/AbstractSource.h"
 
 namespace {
-    const unsigned int DEFAULT_BLOCK_LENGTH = 30;
-
     unsigned int getBlockLength(const VieVS::Network& network) {
         auto it = std::max_element(
             network.getStations().begin(), 
@@ -18,18 +17,21 @@ namespace {
                 return a.getPARA().minScan < b.getPARA().minScan;
             });
 
-        return (it == network.getStations().end()) ? DEFAULT_BLOCK_LENGTH : it->getPARA().minScan;
+        return it->getPARA().minScan;
     }
 } // private
-
-#define DEFAULT_WINDOW_BLOCK_COUNT 10
 
 namespace VieVS {
     void SchedulerILP::initialize() noexcept {
         unsigned int blockLength = getBlockLength(network_);
-        // TODO: This should be tunable
-        unsigned int windowLength = blockLength * DEFAULT_WINDOW_BLOCK_COUNT;
+        
         try {
+            unsigned int windowLength;
+            windowLength = xml_.get<unsigned int>( "VieSchedpp.general.ilpOptimizationWindow" );
+            if(windowLength < 3 * blockLength) {
+                throw std::runtime_error("Length of optimization window must be >= 3 times the minimum scan length");
+            }
+            // initialize the model
             model_ = new Model(network_, sourceList_, blockLength, windowLength);
         } catch(GRBException& e) {
             (void) e;
