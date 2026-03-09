@@ -195,16 +195,21 @@ private:
         unsigned long qId;
         std::map<unsigned long, std::pair<PointingVector, size_t>> sData;
 
-        bool append(const Model* model, 
+        // none indicates failure, true is a successful append, 
+        // false indicates that a new scan needs to be created and this one terminated
+        boost::optional<bool> append(const Model* model, 
             std::shared_ptr<const VieVS::AbstractSource> const q, 
             Station& s, size_t t) noexcept;
 
-        Scan finish(const Model* model, const std::vector<unsigned int>& slewTime) const noexcept;
+        Scan finish(const Model* model, 
+            const std::vector<unsigned int>& slewTime, 
+            std::vector<unsigned int>& endOfLastScan) const noexcept;
     };
 
     class ActiveScans {
     private:
         std::vector<ScanBuilder> scans_;
+        std::vector<ScanBuilder> scansToAppend_;
         const Model* model_;
     public:
         ActiveScans(const Model* model) : model_(model) { /* STUB */ }
@@ -213,6 +218,12 @@ private:
             Station& s, size_t t) noexcept;
         
         void updateScans(std::vector<Scan>& scans, size_t t);
+    
+private:
+        std::vector<unsigned int> computeSlewTime(const ScanBuilder& scan, 
+            const std::vector<Scan>& scans) noexcept;
+        std::vector<unsigned int> computeEndOfLastScan(const ScanBuilder& scan, 
+            const std::vector<Scan>& scans) noexcept;
     };
 
 private:

@@ -838,7 +838,10 @@ bool Scheduler::checkAndStatistics( ofstream &of ) noexcept {
                 unsigned int thisEndTime = thisEnd.getTime();
                 unsigned int nextStartTime = nextStart.getTime();
 
-                if ( nextStartTime < thisEndTime ) {
+                // TODO(Hank): The addition of the secondary condition is a result of the Scan class's structure
+                // and the model constraints. It's possible for scans to be 'split' up due to the inability for a station to
+                // return to an ongoing Scan
+                if ( nextStartTime < thisEndTime && thisEnd.getSrcid() != nextStart.getSrcid() ) {
                     ++countErrors;
                     of << "    ERROR #" << countErrors
                        << ": start time of next scan is before end time of previouse scan! scans: "
@@ -912,7 +915,10 @@ bool Scheduler::checkAndStatistics( ofstream &of ) noexcept {
                     if ( this->sourceList_.isSatellite(scan_nextStart.getSourceId()) ){
                         buffer = 2;
                     }
-                    if ( availableTime + buffer < min_neededTime ) {
+                    // TODO(Hank): The addition of the secondary condition is a result of the Scan class's structure
+                    // and the model constraints. It's possible for scans to be 'split' up due to the inability for a station to
+                    // return to an ongoing Scan
+                    if ( availableTime + buffer < min_neededTime && thisEnd.getSrcid() == nextStart.getSrcid() ) {
                         if ( this->sourceList_.isSatellite(scan_nextStart.getSourceId()) ){
                             ++countWarnings;
                             of << "    WARNING #" << countErrors

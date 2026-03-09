@@ -86,6 +86,20 @@ namespace VieVS {
         scans_.insert(scans_.end(), scansOptimal.begin(), scansOptimal.end());
         sortSchedule( Timestamp::start );
 
+#if 0
+        for(const Scan& scan : scans_) {
+            std::cout << "[" << scan.getId() << "] source: " << scan.getSourceId();
+            for(unsigned long sId : scan.getStationIds()) {
+                if(auto idx = scan.findIdxOfStationId(sId)) {
+                    std::cout << ", " << network_.getStation(sId).getName() << 
+                        " (" << scan.getTimes().getObservingTime(*idx) << 
+                        " for " << scan.getTimes().getObservingDuration(*idx) << ")";
+                }
+            }
+            std::cout << std::endl;
+        }
+#endif
+
         // clear all the statistics from the greedy run
         for(Station& s : network_.refStations()) {
             s.setStatistics(Station::Statistics());

@@ -1,6 +1,7 @@
 #include "Model.h"
 #include <limits>
 #include <memory>
+#include <numeric>
 #include <stdexcept>
 #include <tuple>
 #include <vector>
@@ -237,7 +238,7 @@ next_b:
                     for(size_t t1 = 0; t1 < blockCount_ - 1; ++t1) {
                         for(size_t t2 = t1 + 1; t2 < blockCount_; ++t2) {
                             size_t slew = Model::calculateSlewTime(s, q1, q2, t1, t2);
-                            if(t2 - t1 > slew) continue;
+                            if(t2 - t1 > slew + 1) continue;
                             GRBLinExpr lhs;
                             if(auto var = getVar(ModelKey::StaActive(this, q1, s, t1))) {
                                 lhs += *var;
@@ -290,18 +291,68 @@ next_t1:
         std::cout << "[info] Added " << count << " sky coverage constraints to model";
 #endif
 
-        GRBLinExpr obj;
+        model_->set(GRB_IntAttr_ModelSense, GRB_MAXIMIZE);
+
+        
 
         // coverage objective
+        GRBLinExpr objSkyCov;
         double co = 1.0 / static_cast<double>(coverage_->cellCount()) / static_cast<double>(network_.getNSta());
         for(const Station& s : network_.refStations()) {
             for(size_t c = 0; c < coverage_->cellCount(); ++c) {
                 if(auto var = getVar(ModelKey::StaCoverage(this, s, c))) {
-                    obj += (*var) * co;
+                    objSkyCov += (*var) * co;
                 } else throw UNREACHABLE;
             }
         }
-        model_->setObjective(obj, GRB_MAXIMIZE);
+
+        model_->setObjectiveN(objSkyCov, 0, 2);
+
+        // baseline occurrence
+        std::map<unsigned long, double> bLength;
+        for(const Baseline& b : network_.getBaselines()) {
+            const Station& s1 = network_.getStation(b.getStaid1());
+            const Station& s2 = network_.getStation(b.getStaid2());
+
+            double length = s1.getPosition()->getDistance(*s2.getPosition());
+            bLength.insert(std::make_pair(b.getId(), length));
+        }
+
+        auto it = std::max_element(bLength.begin(), bLength.end(),
+            [](const auto& l1, const auto& l2) { return l1.second < l2.second; });
+        double bLengthMax = it->second;
+
+        std::map<unsigned long, double> bCo;
+        std::transform(bLength.begin(), bLength.end(), std::inserter(bCo, bCo.end()), 
+            [bLengthMax](const auto& entry) { return std::make_pair(entry.first, std::exp(entry.second / bLengthMax)); });
+
+        double bSum = std::accumulate(bCo.begin(), bCo.end(), 0.0, 
+            [](double acc, const auto& entry) { return acc + entry.second; });
+
+        std::for_each(bCo.begin(), bCo.end(), 
+            [bSum](auto& entry) { entry.second /= bSum; });
+
+        GRBLinExpr objBaselines;
+        for(const Baseline& b : network_.getBaselines()) {
+            double co = bCo.at(b.getId());
+#ifdef VIESCHEDPP_LOG
+        BOOST_LOG_TRIVIAL( info ) << network_.getStation(b.getStaid1()).getName() << 
+            "-" << network_.getStation(b.getStaid2()).getName() << " weighting: " << co;
+#else
+        std::cout << "[info] " << network_.getStation(b.getStaid1()).getName() << 
+            "-" << network_.getStation(b.getStaid2()).getName() << " weighting: " << co;
+#endif
+            co /= static_cast<double>(blockCount_);
+            for(size_t t = 0; t < blockCount_; ++t) {
+                for(const auto q : sourceList_.getSources()) {
+                    if(auto var = getVar(ModelKey::BlnActive(this, q, b, t))) {
+                        objBaselines += (*var) * co;
+                    }
+                }
+            }
+        }
+
+        model_->setObjectiveN(objBaselines, 1, 1);
 
 #ifdef VIESCHEDPP_LOG
             BOOST_LOG_TRIVIAL( info ) << "Finished building ILP model";
@@ -612,9 +663,11 @@ namespace VieVS {
             // populate StaActive variables
             for(unsigned long sId : scan.getStationIds()) {
                 Station& s = network_.refStation(sId);
+
                 size_t t0 = (scanTimes.getObservingTime(sId) + blockLength_ - 1) / blockLength_;
                 size_t tf = t0 + scanTimes.getObservingDuration(sId) / blockLength_;
                 tf = std::min(tf, blockCount_);
+
                 for(size_t t = t0; t < tf; ++t) {
                     if(auto var = getVar(ModelKey::StaActive(this, q, s, t))) {
                         var->set(GRB_DoubleAttr_Start, 1.0);
@@ -664,26 +717,13 @@ next_c:
 #endif
     }
 
-#if 0
-    void Model::activeScanAppend(std::vector<Scan>& scansActive, 
-        std::shared_ptr<const VieVS::AbstractSource> const q, 
-        const Station& s, size_t t) const noexcept {
-        bool found = false;
-        for(Scan& scan : scansActive) {
-            std::vector<unsigned long> sIds = scan.getStationIds();
-            if(std::find(sIds.begin(), sIds.end(), s.getId()) == sIds.end()) continue;
-            Scan()
-        }
-    }   
-#endif
-
-    bool Model::ScanBuilder::append(const Model* model, std::shared_ptr<const VieVS::AbstractSource> const q, 
+    boost::optional<bool> Model::ScanBuilder::append(const Model* model, std::shared_ptr<const VieVS::AbstractSource> const q, 
         Station& s, size_t t) noexcept {
-        if(qId != q->getId()) return false;
+        if(qId != q->getId()) return boost::none;
         try {
-            size_t& eols = sData.at(s.getId()).second;
-            if(eols == t) {
-                ++eols;
+            size_t& end = sData.at(s.getId()).second;
+            if(end == t) {
+                ++end;
                 return true;
             }
             return false;
@@ -696,47 +736,55 @@ next_c:
         }
     }
 
-    Scan Model::ScanBuilder::finish(const Model* model, const std::vector<unsigned int>& slewTime) const noexcept {
+    Scan Model::ScanBuilder::finish(const Model* model, 
+        const std::vector<unsigned int>& slewTime, 
+        std::vector<unsigned int>& endOfLastScan) const noexcept {
         std::vector<PointingVector> pointingVectors;
         std::vector<PointingVector> pointingVectorsEnd;
-        std::vector<unsigned int> endOfLastScan;
+        // std::vector<unsigned int> endOfLastScan;
 
         typedef std::pair<const unsigned long, std::pair<PointingVector, size_t>> Entry;
         std::transform(sData.begin(), sData.end(), std::back_inserter(pointingVectors),
             [](const Entry& entry) { return entry.second.first; });
 
         size_t blockLength = model->blockLength_;
-        std::transform(sData.begin(), sData.end(), std::back_inserter(endOfLastScan),
-            [blockLength](const Entry& entry) { return entry.second.second * blockLength; });
+        // std::transform(sData.begin(), sData.end(), std::back_inserter(endOfLastScan),
+        //     [blockLength](const Entry& entry) { return entry.second.second * blockLength; });
 
         pointingVectorsEnd.reserve(pointingVectors.size());
         for(size_t i = 0; i < pointingVectors.size(); ++i) {
             const PointingVector& pv0 = pointingVectors[i];
+
+            PointingVector pve(pv0.getStaid(), qId);
+            pve.setTime(sData.at(pv0.getStaid()).second * blockLength);
+
             Station& s = model->network_.refStation(pv0.getStaid());
             std::shared_ptr<const VieVS::AbstractSource> const q = model->sourceList_.getSource(qId);
-            
-            PointingVector pve(pv0.getStaid(), qId);
-            pve.setTime(endOfLastScan[i]);
             s.calcAzEl_rigorous(q, pve);
+
             pointingVectorsEnd.push_back(pve);
         }
 
-        unsigned int scanStart = std::numeric_limits<unsigned int>::max();
-
         std::vector<unsigned int> fieldSystemTime;
         std::vector<unsigned int> preob;
+        std::vector<unsigned int> scanStart;
         std::vector<unsigned int> observingTimes;
 
         for(size_t i = 0; i < pointingVectors.size(); ++i) {
             const PointingVector& pv0 = pointingVectors[i];
             const PointingVector& pve = pointingVectorsEnd[i];
+
             const Station& s = model->network_.getStation(pv0.getStaid());
-
-            scanStart = std::min(scanStart, pv0.getTime());
-
-            fieldSystemTime.push_back(s.getPARA().systemDelay);
-            preob.push_back(s.getPARA().preob);
-            observingTimes.push_back(pve.getTime() - pv0.getTime());
+            if(pv0.getTime() != 0) {
+                fieldSystemTime.push_back(s.getPARA().systemDelay);
+                preob.push_back(s.getPARA().preob);
+            } else {
+                fieldSystemTime.push_back(0);
+                preob.push_back(0);
+            }
+            
+            scanStart.push_back(pv0.getTime());
+            observingTimes.push_back(pve.getTime());
         }
 
         std::vector<Observation> obs;
@@ -757,10 +805,25 @@ next_c:
                 obs.emplace_back(blid, pvi.getStaid(), pvj.getStaid(), qId, startTime, observingTime);
             }
         }
+#if 0
+        std::cout << "------------------------------------------------------------" << std::endl;
+        for(size_t i = 0; i < pointingVectors.size(); ++i) {
+            std::cout << model->network_.getStation(pointingVectors[i].getStaid()).getName() << 
+                " observing " << model->sourceList_.getSource(pointingVectors[i].getSrcid())->getName() << 
+                ", eols: " << endOfLastScan[i] << ", fsys: " << fieldSystemTime[i] << ", slew: " << slewTime[i] << 
+                ", preob: " << preob[i] << ", start: " << scanStart[i] << ", obs: " << observingTimes[i] << std::endl;
+        }
+#endif
 
         Scan scan(pointingVectors, endOfLastScan, Scan::ScanType::standard);
         scan.setPointingVectorsEndtime(pointingVectorsEnd);
-        scan.setScanTimes(endOfLastScan, fieldSystemTime, slewTime, preob, scanStart, observingTimes);
+        if(!scan.setScanTimes(endOfLastScan, fieldSystemTime, slewTime, preob, scanStart, observingTimes)) {
+#ifdef VIESCHEDPP_LOG
+            BOOST_LOG_TRIVIAL( error ) << "Failed to set ScanTimes";
+#else
+            std::cout << "[error] Failed to set ScanTimes";
+#endif
+        }
         scan.setObservations(obs);
         
         return scan;
@@ -768,8 +831,13 @@ next_c:
 
     void Model::ActiveScans::append(std::shared_ptr<const VieVS::AbstractSource> const q, 
         Station& s, size_t t) noexcept {
+        boost::optional<const Model::ScanBuilder&> scanContinuation = boost::none;
         for(Model::ScanBuilder& scan : scans_) {
-            if(scan.append(model_, q, s, t)) return;
+            if(boost::optional<bool> ret = scan.append(model_, q, s, t)) {
+                if(*ret) return;
+                scanContinuation = scan;
+            }
+            // if(scan.append(model_, q, s, t)) return;
         }
 
         PointingVector pv(s.getId(), q->getId());
@@ -779,11 +847,39 @@ next_c:
         Model::ScanBuilder scan;
         scan.qId = q->getId();
         scan.sData.insert(std::make_pair(s.getId(), std::make_pair(pv, t + 1)));
+        
+        if(scanContinuation) {
+            for(const auto& sEntry : scanContinuation->sData) {
+                if(sEntry.first == s.getId() || sEntry.second.second <= t) continue;
+
+                const auto& sData = sEntry.second;
+
+                PointingVector pv(sEntry.first, q->getId());
+                pv.setTime(t * model_->blockLength_);
+                s.calcAzEl_rigorous(q, pv);
+
+                scan.sData.insert(std::make_pair(sEntry.first, std::make_pair(pv, t + 1)));
+            }
+
+            auto it = std::find_if(scans_.begin(), scans_.end(),
+                [&](const ScanBuilder& sb) { return sb.qId == scanContinuation->qId; });
+            if(it != scans_.end()) {
+                scansToAppend_.push_back(std::move(*it));
+                scans_.erase(it);
+            }
+        }
 
         scans_.emplace_back(scan);
     }
 
     void Model::ActiveScans::updateScans(std::vector<Scan>& scans, size_t t) {
+        for(auto& scan : scansToAppend_) {
+            std::vector<unsigned int> slewTime = Model::ActiveScans::computeSlewTime(scan, scans);
+            std::vector<unsigned int> endOfLastScan = Model::ActiveScans::computeEndOfLastScan(scan, scans);
+            scans.push_back(scan.finish(model_, slewTime, endOfLastScan));
+        }
+        scansToAppend_.clear();
+
         std::vector<size_t> remove;
         for(size_t i = 0, j = 0; i < scans_.size(); ++i, j = 0) {
             for(const auto& sEntry : scans_[i].sData) {
@@ -792,27 +888,9 @@ next_c:
             }
 
             if(j < 2) {
-                std::vector<unsigned int> scanTime;
-                for(const auto& sEntryInner : scans_[i].sData) {
-                    const Station& s = model_->network_.getStation(sEntryInner.first);
-                    if(scans.empty()) {
-                        scanTime.push_back(0);
-                    } else {
-                        boost::optional<PointingVector> pv0 = boost::none;
-                        for(size_t i = scans.size(); i-- > 0;) {
-                            if(auto j = scans[i].findIdxOfStationId(sEntryInner.first)) {
-                                pv0 = scans[i].getPointingVector(*j, Timestamp::end);
-                                break;
-                            }
-                        }
-                        unsigned int slew = 0;
-                        if(pv0) {
-                            slew = s.getAntenna().slewTime(*pv0, sEntryInner.second.first);
-                        }
-                        scanTime.push_back(slew);
-                    }
-                }
-                Scan scan = scans_[i].finish(model_, scanTime);
+                std::vector<unsigned int> slewTime = Model::ActiveScans::computeSlewTime(scans_[i], scans);
+                std::vector<unsigned int> endOfLastScan = Model::ActiveScans::computeEndOfLastScan(scans_[i], scans);
+                Scan scan = scans_[i].finish(model_, slewTime, endOfLastScan);
                 scans.emplace_back(scan);
                 remove.emplace_back(i);
             }
@@ -822,6 +900,55 @@ next_c:
         for(size_t i : remove) {
             scans_.erase(scans_.begin() + i);
         }
+    }
+
+    std::vector<unsigned int> Model::ActiveScans::computeSlewTime(const Model::ScanBuilder& scan, 
+        const std::vector<Scan>& scans) noexcept {
+        std::vector<unsigned int> slewTime;
+        for(const auto& sEntryInner : scan.sData) {
+            const Station& s = model_->network_.getStation(sEntryInner.first);
+            if(scans.empty()) {
+                slewTime.push_back(0);
+            } else {
+                boost::optional<PointingVector> pv0 = boost::none;
+                for(size_t i = scans.size(); i-- > 0;) {
+                    if(auto j = scans[i].findIdxOfStationId(sEntryInner.first)) {
+                        pv0 = scans[i].getPointingVector(*j, Timestamp::end);
+                        break;
+                    }
+                }
+                unsigned int slew = 0;
+                if(pv0) {
+                    slew = s.getAntenna().slewTime(*pv0, sEntryInner.second.first);
+                }
+                slewTime.push_back(slew);
+            }
+        }
+
+        return slewTime;
+    }
+
+    std::vector<unsigned int> Model::ActiveScans::computeEndOfLastScan(const Model::ScanBuilder& scan, 
+        const std::vector<Scan>& scans) noexcept {
+        std::vector<unsigned int> endOfLastScan;
+        for(const auto& sEntryInner : scan.sData) {
+            const Station& s = model_->network_.getStation(sEntryInner.first);
+            if(scans.empty()) {
+                endOfLastScan.push_back(0);
+            } else {
+                unsigned int eols = 0;
+                for(size_t i = scans.size(); i-- > 0;) {
+                    if(auto j = scans[i].findIdxOfStationId(sEntryInner.first)) {
+                        eols = scans[i].getPointingVector(*j, Timestamp::end).getTime();
+                        break;
+                    }
+                }
+                
+                endOfLastScan.push_back(eols);
+            }
+        }
+
+        return endOfLastScan;
     }
 
     std::vector<Scan> Model::readScans(void) const noexcept {
@@ -843,13 +970,26 @@ next_c:
     }
 
     void Model::dump(GRB_DoubleAttr attr) const noexcept {
+        for(size_t t = 0; t < blockCount_; ++t) {
+            std::cout << (t % 10);
+        }
+        std::cout << std::endl;
+
+        std::map<unsigned long, char> qId;
         for(const Station& s : network_.getStations()) {
             std::cout << s.getName() << std::endl;
             for(size_t t = 0; t < blockCount_; ++t) {
                 for(const auto q : sourceList_.getSources()) {
                     if(auto var = getVar(ModelKey::StaActive(this, q, s, t))) {
                         if(var->get(attr) > 0.0) {
-                            std::cout << 'X';
+                            char ch;
+                            try {
+                                ch = qId.at(q->getId());
+                            } catch(...) {
+                                ch = static_cast<char>(qId.size() + 65);
+                                qId.insert(std::make_pair(q->getId(), ch));
+                            }
+                            std::cout << ch;
                             goto next_t;
                         }
                     }
