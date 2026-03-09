@@ -216,6 +216,15 @@ private:
     };
 
 private:
+    template<typename F>
+    void apply(F op);
+    template<typename F>
+    void applyBetween(size_t t0, size_t tf, F op);
+
+private:
+    bool optimizeBetween(size_t t0, size_t tf);
+
+private:
     void loadScans(const std::vector<Scan>& scans);
     std::vector<Scan> readScans(void) const noexcept;
 

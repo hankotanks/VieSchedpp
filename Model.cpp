@@ -312,41 +312,50 @@ next_t1:
     }
 
     bool Model::optimize(void) {
+#ifdef WITH_GUROBI
+        if(model_ == nullptr) return false;
+
         model_->update();
         
         // TODO: sliding window optimization
-        
-        model_->optimize();
 
-        if(model_->get(GRB_IntAttr_Status) != GRB_OPTIMAL) {
-#ifdef VIESCHEDPP_LOG
-            BOOST_LOG_TRIVIAL( info ) << "No optimal solution found";
-#else
-            std::cout << "[info] No optimal solution found";
-#endif
-            return false;
+        // fix all variables in place
+        Model::apply([](GRBVar& var) {
+            double val = var.get(GRB_DoubleAttr_Start);
+            var.set(GRB_DoubleAttr_LB, val);
+            var.set(GRB_DoubleAttr_UB, val);
+        }); 
+
+        for (size_t i = 0; i < windowCount_; ++i) {
+            size_t t0 = i * (windowBlockCount_ - 1);
+            size_t tf = std::min(t0 + windowBlockCount_, blockCount_);
+            if(!Model::optimizeBetween(t0, tf)) return false;
         }
-
-#ifdef VIESCHEDPP_LOG
-        BOOST_LOG_TRIVIAL( info ) << "Completed optimization";
-#else
-        std::cout << "[info] Completed optimization";
-#endif
+        
         return true;
+#else // WITH_GUROBI
+        return false;
+#endif // WITH_GUROBI   
     }
 
     std::vector<Scan> Model::optimize(std::vector<Scan>& scans) {
+#ifdef WITH_GUROBI
+        if(model_ == nullptr) return {};
+
         Model::loadScans(scans);
 
-        // std::cout << "Initial:" << std::endl;
-        // Model::dump(GRB_DoubleAttr_Start);
+        std::cout << "Initial:" << std::endl;
+        Model::dump(GRB_DoubleAttr_Start);
 
         if(!Model::optimize()) return {};
 
-        // std::cout << "Optimized" << std::endl;
-        // Model::dump(GRB_DoubleAttr_X);
+        std::cout << "Optimized" << std::endl;
+        Model::dump(GRB_DoubleAttr_X);
 
         return Model::readScans();
+#else // WITH_GUROBI
+        return {};
+#endif // WITH_GUROBI
     }
 }
 
@@ -492,6 +501,72 @@ namespace VieVS {
         return key;
     }
 
+    template<typename F>
+    void Model::apply(F op) {
+        Model::applyBetween(0, blockCount_, op);
+    }
+
+    template<typename F>
+    void Model::applyBetween(size_t t0, size_t tf, F op) {
+        for(size_t t = t0; t < tf; ++t) {
+            for(const auto q : sourceList_.getSources()) {
+                for(Station& s : network_.refStations()) {
+                    if(auto var = getVar(ModelKey::StaActive(this, q, s, t))) op(*var);
+                }
+            }
+        }
+
+        for(size_t t = t0; t < tf; ++t) {
+            for(const auto q : sourceList_.getSources()) {
+                for(const Baseline& b : network_.getBaselines()) {
+                    if(auto var = getVar(ModelKey::BlnActive(this, q, b, t))) op(*var);
+                }
+            }
+        }
+    }
+
+    bool Model::optimizeBetween(size_t t0, size_t tf) {
+#ifdef VIESCHEDPP_LOG
+            BOOST_LOG_TRIVIAL( info ) << "Optimizing between " << t0 * blockLength_ << " and " << tf * blockLength_;
+#else
+            std::cout << "[info] Optimizing between " << t0 * blockLength_ << " and " << tf * blockLength_;
+#endif
+
+        // 'unlock' all variables
+        Model::applyBetween(t0, tf, [](GRBVar& var){
+            var.set(GRB_DoubleAttr_LB, 0.0);
+            var.set(GRB_DoubleAttr_UB, 1.0);
+        });
+
+        // optimize
+        model_->optimize();
+
+        // error checking
+        if(model_->get(GRB_IntAttr_Status) != GRB_OPTIMAL) {
+#ifdef VIESCHEDPP_LOG
+            BOOST_LOG_TRIVIAL( info ) << "No optimal solution found between " << t0 * blockLength_ << " and " << tf * blockLength_;
+#else
+            std::cout << "[info] No optimal solution found between " << t0 * blockLength_ << " and " << tf * blockLength_;
+#endif
+            return false;
+        }
+
+#ifdef VIESCHEDPP_LOG
+        BOOST_LOG_TRIVIAL( info ) << "Completed optimization between " << t0 * blockLength_ << " and " << tf * blockLength_;
+#else
+        std::cout << "[info] Completed optimization between " << t0 * blockLength_ << " and " << tf * blockLength_;
+#endif
+
+        // 'lock' all variables again
+        Model::applyBetween(t0, tf, [](GRBVar& var){
+            double val = var.get(GRB_DoubleAttr_X);
+            var.set(GRB_DoubleAttr_LB, val);
+            var.set(GRB_DoubleAttr_UB, val);
+        });
+
+        return true;
+    }
+
     void Model::loadScans(const std::vector<Scan>& scans) {
         if(scans.empty()) {
 #ifdef VIESCHEDPP_LOG
@@ -545,10 +620,10 @@ namespace VieVS {
                         var->set(GRB_DoubleAttr_Start, 1.0);
                     } else if(t + 1 != tf) {
 #ifdef VIESCHEDPP_LOG
-                        BOOST_LOG_TRIVIAL( warning ) << q->getName() << "is not visible by " << s.getName() << 
+                        BOOST_LOG_TRIVIAL( warning ) << q->getName() << " is not visible by " << s.getName() << 
                             " for the last " << (tf - 1) << " out of " << tf << " time segments";
 #else
-                        std::cout << "[warning] " << q->getName() << "is not visible by " << s.getName() << 
+                        std::cout << "[warning] " << q->getName() << " is not visible by " << s.getName() << 
                             " for the last " << (tf - 1) << " out of " << tf << " time segments";
 #endif
                         break;

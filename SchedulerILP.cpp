@@ -58,18 +58,9 @@ namespace VieVS {
             sky.calculateSkyCoverageScores();
         }
 
-        { // create output
-            VieVS::Scheduler temp(this);
-            VieVS::Output output(temp);
-            output.writeStatistics(statisticsOf_);
-            ++version_;
-#ifdef VIESCHEDPP_LOG
-            BOOST_LOG_TRIVIAL( info ) << "Output initial solution's statistics";
-#else
-            std::cout << "[info] Output initial solution's statistics";
-#endif
-        }
-       
+        // save initial solution for later output
+        VieVS::Scheduler initial(this);
+
         // compute optimal scans from the ILP model
         std::vector<Scan> scansOptimal = model_->optimize(scans_);
         if(scansOptimal.empty()) {
@@ -79,6 +70,15 @@ namespace VieVS {
             std::cout << "[info] Reverting to previous solution";
 #endif
             return;
+        } else {
+            VieVS::Output output(initial);
+            output.writeStatistics(statisticsOf_);
+            ++version_;
+#ifdef VIESCHEDPP_LOG
+            BOOST_LOG_TRIVIAL( info ) << "Output initial solution's statistics";
+#else
+            std::cout << "[info] Output initial solution's statistics";
+#endif
         }
 
         // replace old scans with them
