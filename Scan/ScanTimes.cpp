@@ -211,13 +211,16 @@ void ScanTimes::addTagalongStationTime( const VieVS::PointingVector &pv_start, c
 }
 
 
-bool ScanTimes::setPreobTime( const vector<unsigned int> &preob ) {
+bool ScanTimes::setPreobTime( const vector<unsigned int> &preob, const vector<bool> &excl ) {
     bool valid = true;
     for ( int i = 0; i < endOfObservingTime_.size(); ++i ) {
         endOfIdleTime_[i] = endOfPreobTime_[i] - preob[i];
 
         if ( endOfIdleTime_[i] < endOfSlewTime_[i] ) {
-            valid = false;
+            if ( excl[i] ) {
+                valid = false;
+            }
+            
             endOfSlewTime_[i] = endOfIdleTime_[i];
 
             if ( endOfSlewTime_[i] < endOfFieldSystemTime_[i] ) {

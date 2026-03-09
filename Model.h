@@ -194,6 +194,7 @@ private:
     struct ScanBuilder {
         unsigned long qId;
         std::map<unsigned long, std::pair<PointingVector, size_t>> sData;
+        std::set<unsigned long> sContinuation;
 
         // none indicates failure, true is a successful append, 
         // false indicates that a new scan needs to be created and this one terminated

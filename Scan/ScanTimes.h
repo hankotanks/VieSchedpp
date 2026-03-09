@@ -536,9 +536,10 @@ class ScanTimes : public VieVS_Object {
      * @author Matthias Schartner
      *
      * @param preob preob time
+     * @param excl stations to be omitted from validation
      * @return true if value was valid, otherwise false
      */
-    bool setPreobTime( const std::vector<unsigned int> &preob );
+    bool setPreobTime( const std::vector<unsigned int> &preob, const std::vector<bool> &excl = {} );
 
 
     /**

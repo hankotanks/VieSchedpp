@@ -474,7 +474,7 @@ namespace VieVS {
         PointingVector pv1(s.getId(), q1->getId());
         PointingVector pv2(s.getId(), q2->getId());
 
-        pv1.setTime(t1 * blockLength_);
+        pv1.setTime(t1 * blockLength_ + blockLength_);
         pv2.setTime(t2 * blockLength_);
         s.calcAzEl_rigorous(q1, pv1);
         s.calcAzEl_rigorous(q2, pv2);
@@ -731,7 +731,9 @@ next_c:
             PointingVector pv(s.getId(), qId);
             pv.setTime(t * model->blockLength_);
             s.calcAzEl_rigorous(q, pv);
+
             sData.insert(std::make_pair(s.getId(), std::make_pair(pv, t + 1)));
+            if(t == 0) sContinuation.insert(s.getId());
             return true;
         }
     }
@@ -775,12 +777,12 @@ next_c:
             const PointingVector& pve = pointingVectorsEnd[i];
 
             const Station& s = model->network_.getStation(pv0.getStaid());
-            if(pv0.getTime() != 0) {
-                fieldSystemTime.push_back(s.getPARA().systemDelay);
-                preob.push_back(s.getPARA().preob);
-            } else {
+            if(pv0.getTime() == 0 || sContinuation.count(pv0.getStaid()) > 0) {
                 fieldSystemTime.push_back(0);
                 preob.push_back(0);
+            } else {
+                fieldSystemTime.push_back(s.getPARA().systemDelay);
+                preob.push_back(s.getPARA().preob);
             }
             
             scanStart.push_back(pv0.getTime());
@@ -805,25 +807,32 @@ next_c:
                 obs.emplace_back(blid, pvi.getStaid(), pvj.getStaid(), qId, startTime, observingTime);
             }
         }
-#if 0
-        std::cout << "------------------------------------------------------------" << std::endl;
-        for(size_t i = 0; i < pointingVectors.size(); ++i) {
-            std::cout << model->network_.getStation(pointingVectors[i].getStaid()).getName() << 
-                " observing " << model->sourceList_.getSource(pointingVectors[i].getSrcid())->getName() << 
-                ", eols: " << endOfLastScan[i] << ", fsys: " << fieldSystemTime[i] << ", slew: " << slewTime[i] << 
-                ", preob: " << preob[i] << ", start: " << scanStart[i] << ", obs: " << observingTimes[i] << std::endl;
-        }
-#endif
 
         Scan scan(pointingVectors, endOfLastScan, Scan::ScanType::standard);
         scan.setPointingVectorsEndtime(pointingVectorsEnd);
-        if(!scan.setScanTimes(endOfLastScan, fieldSystemTime, slewTime, preob, scanStart, observingTimes)) {
+
+        ScanTimes& times = scan.referenceTime();
+        times.setEndOfLastScan( endOfLastScan );
+        for ( int i = 0; i < slewTime.size(); ++i ) {
+            times.addTimes( i, fieldSystemTime[i], slewTime.at( static_cast<unsigned long>( i ) ), 0 );
+            times.setObservingTime( i, observingTimes[i], Timestamp::end );
+        }
+        times.setObservingStarts( scanStart );
+
+        std::vector<bool> excl;
+        for(const auto& sEntry : sData) {
+            excl.push_back(sContinuation.count(sEntry.first) > 0);
+        }
+
+        bool valid = times.setPreobTime( preob, excl );
+        if(!valid) {
 #ifdef VIESCHEDPP_LOG
             BOOST_LOG_TRIVIAL( error ) << "Failed to set ScanTimes";
 #else
             std::cout << "[error] Failed to set ScanTimes";
 #endif
         }
+
         scan.setObservations(obs);
         
         return scan;
@@ -848,9 +857,14 @@ next_c:
         scan.qId = q->getId();
         scan.sData.insert(std::make_pair(s.getId(), std::make_pair(pv, t + 1)));
         
+        if(t == 0) {
+
+        }
+
         if(scanContinuation) {
             for(const auto& sEntry : scanContinuation->sData) {
                 if(sEntry.first == s.getId() || sEntry.second.second <= t) continue;
+                scan.sContinuation.insert(sEntry.first);
 
                 const auto& sData = sEntry.second;
 
@@ -907,7 +921,7 @@ next_c:
         std::vector<unsigned int> slewTime;
         for(const auto& sEntryInner : scan.sData) {
             const Station& s = model_->network_.getStation(sEntryInner.first);
-            if(scans.empty()) {
+            if(scan.sContinuation.count(sEntryInner.first) > 0) {
                 slewTime.push_back(0);
             } else {
                 boost::optional<PointingVector> pv0 = boost::none;
@@ -933,7 +947,7 @@ next_c:
         std::vector<unsigned int> endOfLastScan;
         for(const auto& sEntryInner : scan.sData) {
             const Station& s = model_->network_.getStation(sEntryInner.first);
-            if(scans.empty()) {
+            if(scan.sContinuation.count(sEntryInner.first) > 0) {
                 endOfLastScan.push_back(0);
             } else {
                 unsigned int eols = 0;
@@ -964,17 +978,13 @@ next_c:
                     }
                 }
             }
+
             scansActive.updateScans(scans, t);
         }
         return scans;
     }
 
     void Model::dump(GRB_DoubleAttr attr) const noexcept {
-        for(size_t t = 0; t < blockCount_; ++t) {
-            std::cout << (t % 10);
-        }
-        std::cout << std::endl;
-
         std::map<unsigned long, char> qId;
         for(const Station& s : network_.getStations()) {
             std::cout << s.getName() << std::endl;
