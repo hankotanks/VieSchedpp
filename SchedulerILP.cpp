@@ -26,6 +26,10 @@
 #include "Scheduler.h"
 #include "Source/AbstractSource.h"
 
+#ifdef WITH_GUROBI
+#include <gurobi_c++.h>
+#endif // WITH_GUROBI
+
 namespace {
     unsigned int getBlockLength(const VieVS::Network& network) {
         auto it = std::max_element(
@@ -51,10 +55,14 @@ namespace VieVS {
             }
             // initialize the model
             model_ = new Model(network_, sourceList_, blockLength, windowLength);
-        } catch(GRBException& e) {
+        }
+#ifdef WITH_GUROBI 
+        catch(GRBException& e) {
             (void) e;
             model_ = nullptr;
-        } catch(const std::exception& e) {
+        } 
+#endif // WITH_GUROBI
+        catch(const std::exception& e) {
             model_ = nullptr;
 #ifdef VIESCHEDPP_LOG
             BOOST_LOG_TRIVIAL( error ) << e.what();
