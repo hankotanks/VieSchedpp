@@ -1,11 +1,29 @@
+/*
+ *  VieSched++ Very Long Baseline Interferometry (VLBI) Scheduling Software
+ *  Copyright (C) 2018  Matthias Schartner
+ *
+ *  This program is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation, either version 3 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
 #include "Model.h"
+
 #include <limits>
 #include <memory>
 #include <numeric>
 #include <stdexcept>
 #include <tuple>
 #include <vector>
-#include "gurobi_c.h"
 
 #ifdef WITH_GUROBI
 #include "gurobi_c++.h"
@@ -52,6 +70,7 @@ namespace VieVS {
         blockCount_(TimeSystem::duration / blockLength - 1),
         windowLength_(windowLength), 
         windowBlockCount_((windowLength + blockLength - 1) / blockLength),
+        // TODO: This may need a +1
         windowCount_((windowLength + TimeSystem::duration - blockLength * 3 - 1) / (windowLength - 1)) {
         coverage_ = std::make_unique<ModelCoverage13>();
 #ifdef WITH_GUROBI
@@ -453,7 +472,7 @@ namespace VieVS {
 // helper implementations
 namespace VieVS {
     bool Model::checkStationVisibility(size_t t, 
-        std::shared_ptr<const VieVS::AbstractSource> q, Station& s) const noexcept  {
+        std::shared_ptr<const VieVS::AbstractSource> q, Station& s) const noexcept {
         // make sure source is visible at this time
         PointingVector pv0(s.getId(), q->getId());
         pv0.setTime(t * blockLength_);
@@ -902,11 +921,12 @@ next_c:
             }
 
             if(j < 2) {
+                remove.emplace_back(i);
+
                 std::vector<unsigned int> slewTime = Model::ActiveScans::computeSlewTime(scans_[i], scans);
                 std::vector<unsigned int> endOfLastScan = Model::ActiveScans::computeEndOfLastScan(scans_[i], scans);
                 Scan scan = scans_[i].finish(model_, slewTime, endOfLastScan);
                 scans.emplace_back(scan);
-                remove.emplace_back(i);
             }
         }
 
