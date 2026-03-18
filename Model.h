@@ -77,9 +77,12 @@ public:
      *
      * @param network network
      * @param sourceList sourceList
+     * @param sourceMask sourceMask
      * @param blockLength blockLength
+     * @param windowLength windowLength
      */
     Model(VieVS::Network& network, VieVS::SourceList& sourceList, 
+        const std::set<unsigned long>& sourceMask, 
         unsigned int blockLength, unsigned int windowLength);
 
     /**
@@ -88,12 +91,15 @@ public:
      *
      * @param network network
      * @param sourceList sourceList
+     * @param sourceMask sourceMask
      * @param blockLength blockLength
+     * @param windowLength windowLength
      */
     template<typename T>
     Model(VieVS::Network& network, VieVS::SourceList& sourceList, 
+        const std::set<unsigned long>& sourceMask, 
         unsigned int blockLength, unsigned int windowLength) : 
-        Model(network, sourceList, blockLength, windowLength) {
+        Model(network, sourceList, sourceMask, blockLength, windowLength) {
             static_assert(std::is_base_of<ModelCoverage, T>::value, "unreachable");
             coverage_ = std::make_unique<T>();
         }

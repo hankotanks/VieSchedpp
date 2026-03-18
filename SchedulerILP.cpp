@@ -44,7 +44,7 @@ namespace {
 } // private
 
 namespace VieVS {
-    void SchedulerILP::initialize() noexcept {
+    void SchedulerILP::initialize(const std::set<unsigned long>& sourceMask) noexcept {
         unsigned int blockLength = getBlockLength(network_);
         
         try {
@@ -54,7 +54,7 @@ namespace VieVS {
                 throw std::runtime_error("Length of optimization window must be >= 3 times the minimum scan length");
             }
             // initialize the model
-            model_ = new Model(network_, sourceList_, blockLength, windowLength);
+            model_ = new Model(network_, sourceList_, sourceMask, blockLength, windowLength);
         }
 #ifdef WITH_GUROBI 
         catch(GRBException& e) {
@@ -79,6 +79,15 @@ namespace VieVS {
     
     void SchedulerILP::start() noexcept {
         Scheduler::start();
+        sortSchedule( Timestamp::start );
+
+        std::set<unsigned long> sourceMask;
+        for(const Scan& scan : scans_) {
+            if(sourceMask.count(scan.getSourceId()) > 0) continue;
+            sourceMask.insert(scan.getSourceId());
+        }
+
+        this->initialize(sourceMask);
 
         for(SkyCoverage& sky : network_.refSkyCoverages()) {
             sky.calculateSkyCoverageScores();

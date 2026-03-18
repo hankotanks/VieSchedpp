@@ -55,7 +55,7 @@ namespace VieVS {
 class SchedulerILP : public Scheduler {
     friend class Output;
 private:
-    void initialize() noexcept;
+    void initialize(const std::set<unsigned long>& sourceMask) noexcept;
 public:
     /**
     * @brief constructor
@@ -66,7 +66,7 @@ public:
     * @param fname file name
     */
     SchedulerILP( Initializer &init, std::string path, std::string fname, std::ofstream& statisticsOf ) : 
-        Scheduler(init, path, fname), statisticsOf_(statisticsOf) { SchedulerILP::initialize(); }
+        Scheduler(init, path, fname), statisticsOf_(statisticsOf) { /* STUB */ }
 
     ~SchedulerILP() {
         if(model_) delete model_;
