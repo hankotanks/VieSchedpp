@@ -143,6 +143,7 @@ private:
     // references from VieVS::Scheduler
     VieVS::Network& network_;
     VieVS::SourceList& sourceList_;
+    std::set<unsigned long> sourceMask_;
     // number of segments in schedule
     size_t blockCount_;
     // the size of each time segment (in seconds)
@@ -193,8 +194,14 @@ private:
     };
 private:
     boost::optional<GRBVar> getVar(const ModelKey& key) const noexcept;
+    bool* getSol(const ModelKey& key) noexcept;
+    const bool* getSol(const ModelKey& key) const noexcept;
+    bool* getCov(const ModelKey& key) noexcept;
+    const bool* getCov(const ModelKey& key) const noexcept;
 
     GRBVar& addVar(const ModelKey& key, double lb, double ub, double obj, char vtype);
+    bool& addSol(const ModelKey& key);
+    bool& addCov(const ModelKey& key);
 
 private:
     struct ScanBuilder {
@@ -247,17 +254,19 @@ private:
     std::vector<Scan> readScans(void) const noexcept;
 
 private:
-    void dump(GRB_DoubleAttr attr) const noexcept;
+    std::string dump() const noexcept;
 
 private:
     std::map<ModelKey, GRBVar> var_;
+    std::map<ModelKey, bool> sol_;
+    std::map<ModelKey, bool> cov_;
     std::map<unsigned long, size_t> sta2idx_;
     std::map<unsigned long, size_t> bln2idx_;
     std::map<unsigned long, size_t> src2idx_;
 private:
     // gurobi environment
-    GRBEnv* env_ = nullptr;
-    GRBModel* model_ = nullptr;
+    GRBEnv* env_{nullptr};
+    GRBModel* model_{nullptr};
 #endif // WITH_GUROBI
 };
 }

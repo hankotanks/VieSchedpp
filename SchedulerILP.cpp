@@ -89,6 +89,15 @@ namespace VieVS {
 
         this->initialize(sourceMask);
 
+        if(model_ == nullptr) {
+#ifdef VIESCHEDPP_LOG
+            BOOST_LOG_TRIVIAL( info ) << "Failed to initialize ILP model, proceeding with default scheduler";
+#else
+            std::cout << "[info] Failed to initialize ILP model, proceeding with default scheduler";
+#endif 
+            return;
+        }
+
         for(SkyCoverage& sky : network_.refSkyCoverages()) {
             sky.calculateSkyCoverageScores();
         }
