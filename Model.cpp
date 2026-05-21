@@ -147,12 +147,6 @@ namespace VieVS {
                 }
             }
         }
-
-        for(const Station& s : network_.getStations()) {
-            for(std::size_t c = 0; c < coverage_->cellCount(); ++c) {
-                Model::addCov(ModelKey::StaCoverage(this, s, c));
-            } 
-        }
 #endif // WITH_GUROBI
     }
 
@@ -181,28 +175,6 @@ namespace VieVS {
         std::cout << output_greedy;
         std::cout << "===========================================" << std::endl;
         std::cout << Model::dump();
-#if 0
-        std::cout << "===========================================" << std::endl;
-        std::map<ModelKey, bool> sol_original = sol_;
-        sol_.clear();
-
-        for(size_t t = 0; t < blockCount_; ++t) {
-            for(const auto q : sourceList_.getSources()) {
-                for(const Baseline& b : network_.getBaselines()) {
-                    if(auto sol = getSol(ModelKey::BlnActive(this, q, b, t))) {
-                        if(*sol) {
-                            Station& s1 = network_.refStation(b.getStaid1());
-                            Station& s2 = network_.refStation(b.getStaid2());
-                            Model::addSol(ModelKey::StaActive(this, q, s1, t)) = true;
-                            Model::addSol(ModelKey::StaActive(this, q, s2, t)) = true;
-                        }
-                    }
-                }
-            }
-        }
-
-        std::cout << Model::dump();
-#endif
 
         return Model::readScans();
 #else // WITH_GUROBI
@@ -266,28 +238,36 @@ namespace VieVS {
         return s.isVisible(pvf, q->getPARA().minElevation);
     }
 
-    size_t Model::calculateSlewTime(Station& s, 
+    unsigned int Model::calculateSlewTimeExact(Station& s, 
         const std::shared_ptr<const AbstractSource> q1, 
         const std::shared_ptr<const AbstractSource> q2,
-        size_t t1, size_t t2) const noexcept {
+        unsigned int t1, unsigned int t2) const noexcept {
         if(q1->getId() == q2->getId()) return 0;
         
         PointingVector pv1(s.getId(), q1->getId());
         PointingVector pv2(s.getId(), q2->getId());
 
-        pv1.setTime(t1 * blockLength_ + blockLength_);
-        pv2.setTime(t2 * blockLength_);
+        pv1.setTime(t1);
+        pv2.setTime(t2);
         s.calcAzEl_rigorous(q1, pv1);
         s.calcAzEl_rigorous(q2, pv2);
 
         PointingVector tempVec(pv2);
         if(!s.isVisible(tempVec, q2->getPARA().minElevation)) 
-            return std::numeric_limits<size_t>::max();
+            return std::numeric_limits<unsigned int>::max();
 
         unsigned int t_slew = s.getAntenna().slewTime(pv1, pv2);
         unsigned int t_const = s.getPARA().systemDelay + s.getPARA().preob;
 
-        return (t_slew + t_const + blockLength_ - 1) / blockLength_;
+        return t_slew + t_const;
+    }
+
+    size_t Model::calculateSlewTime(Station& s, 
+        const std::shared_ptr<const AbstractSource> q1, 
+        const std::shared_ptr<const AbstractSource> q2,
+        size_t t1, size_t t2) const noexcept {
+        unsigned int t = Model::calculateSlewTimeExact(s, q1, q2, t1 * blockLength_ + blockLength_, t2 * blockLength_);
+        return (t + blockLength_ - 1) / blockLength_;
     }
 
 #ifdef WITH_GUROBI
@@ -311,18 +291,6 @@ namespace VieVS {
         return &it->second;
     }
 
-    bool* Model::getCov(const ModelKey& key) noexcept {
-        auto it = cov_.find(key);
-        if(it == cov_.end()) return nullptr;
-        return &it->second;
-    }
-
-    const bool* Model::getCov(const ModelKey& key) const noexcept {
-        auto it = cov_.find(key);
-        if(it == cov_.end()) return nullptr;
-        return &it->second;
-    }
-
     GRBVar& Model::addVar(const ModelKey& key, double lb, double ub, double obj, char vtype) {
         auto ret = var_.insert(std::make_pair(key, model_->addVar(lb, ub, obj, vtype)));
         if(!ret.second) throw UNREACHABLE;
@@ -331,12 +299,6 @@ namespace VieVS {
 
     bool& Model::addSol(const ModelKey& key) {
         auto ret = sol_.insert(std::make_pair(key, false));
-        if(!ret.second) throw UNREACHABLE;
-        return ret.first->second;
-    }
-
-    bool& Model::addCov(const ModelKey& key) {
-        auto ret = cov_.insert(std::make_pair(key, false));
         if(!ret.second) throw UNREACHABLE;
         return ret.first->second;
     }
@@ -424,11 +386,33 @@ namespace VieVS {
             std::cout << "[info] Optimizing between " << t0 * blockLength_ << " and " << tf * blockLength_;
 #endif
 
+        std::set<unsigned long> sourceMask;
+        {
+            static constexpr size_t sourceMaskWindow = 2;
+            size_t t_start = (windowBlockCount_ * sourceMaskWindow > t0) ? 0 : (t0 - windowBlockCount_ * sourceMaskWindow);
+            size_t t_end = std::min(blockCount_, tf + windowBlockCount_ * sourceMaskWindow);
+            for(const auto q : sourceList_.getSources()) {
+                if(sourceMask_.count(q->getId()) == 0) continue;
+                for(size_t t = t_start; t < t_end; ++t) {
+                    for(Station& s : network_.refStations()) {
+                        if(auto sol = getSol(ModelKey::StaActive(this, q, s, t))) {
+                            if(*sol) {
+                                sourceMask.insert(q->getId());
+                                goto next_q;
+                            }
+                        }
+                    }
+                }
+next_q:
+                (void) nullptr;
+            }
+        }
+
         // StaActive
         size_t count = 0;
         for(size_t t = t0; t < tf; ++t) {
             for(const auto q : sourceList_.getSources()) {
-                if(sourceMask_.count(q->getId()) == 0) continue;
+                if(sourceMask.count(q->getId()) == 0) continue;
                 for(Station& s : network_.refStations()) {
                     // make sure source is visible at this time
                     if(!Model::checkStationVisibility(t, q, s)) continue;
@@ -455,7 +439,7 @@ namespace VieVS {
         count = 0;
         for(size_t t = t0; t < tf; ++t) {
             for(const auto q : sourceList_.getSources()) {
-                if(sourceMask_.count(q->getId()) == 0) continue;
+                if(sourceMask.count(q->getId()) == 0) continue;
                 for(const Baseline& b : network_.getBaselines()) {
                     Station& s1 = network_.refStation(b.getStaid1());
                     Station& s2 = network_.refStation(b.getStaid2());
@@ -544,7 +528,7 @@ next_c:
                 GRBLinExpr lhs;
                 size_t lhsCount = 0;
                 for(const auto q : sourceList_.getSources()) {
-                    if(sourceMask_.count(q->getId()) == 0) continue;
+                    if(sourceMask.count(q->getId()) == 0) continue;
                     if(auto var = getVar(ModelKey::StaActive(this, q, s, t))) {
                         lhs += *var;
                         lhsCount++;
@@ -568,7 +552,7 @@ next_c:
         count = 0;
         for(size_t t = t0; t < tf; ++t) {
             for(const auto q : sourceList_.getSources()) {
-                if(sourceMask_.count(q->getId()) == 0) continue;
+                if(sourceMask.count(q->getId()) == 0) continue;
                 for(const Station& s1 : network_.getStations()) {
                     GRBVar lhs;
                     GRBLinExpr rhs;
@@ -604,7 +588,7 @@ next_s:
         count = 0;
         for(size_t t = t0; t < tf; ++t) {
             for(const auto q : sourceList_.getSources()) {
-                if(sourceMask_.count(q->getId()) == 0) continue;
+                if(sourceMask.count(q->getId()) == 0) continue;
                 for(const Baseline& b : network_.getBaselines()) {
                     const Station& s1 = network_.getStation(b.getStaid1());
                     const Station& s2 = network_.getStation(b.getStaid2());
@@ -637,14 +621,14 @@ next_b:
         count = 0;
         for(Station& s : network_.refStations()) {
             for(const auto q1 : sourceList_.getSources()) {
-                if(sourceMask_.count(q1->getId()) == 0) continue;
+                if(sourceMask.count(q1->getId()) == 0) continue;
                 for(const auto q2 : sourceList_.getSources()) {
-                    if(sourceMask_.count(q2->getId()) == 0) continue;
+                    if(sourceMask.count(q2->getId()) == 0) continue;
                     if(q1->getId() == q2->getId()) continue;
                     for(size_t t1 = t0; t1 < tf; ++t1) {
                         for(size_t t2 = t1 + 1; t2 < tf; ++t2) {
                             size_t slew = Model::calculateSlewTime(s, q1, q2, t1, t2);
-                            if(t2 - t1 > slew + 1) continue;
+                            if(t2 - t1 > slew) continue;
                             GRBLinExpr lhs;
                             if(auto var = getVar(ModelKey::StaActive(this, q1, s, t1))) {
                                 lhs += *var;
@@ -681,7 +665,7 @@ next_t1:
                 } else throw UNREACHABLE;
                 for(size_t t = t0; t < tf; ++t) {
                     for(const auto q : sourceList_.getSources()) {
-                        if(sourceMask_.count(q->getId()) == 0) continue;
+                        if(sourceMask.count(q->getId()) == 0) continue;
                         if(coverage_->calculateCell(this, t, q, s) != c) continue;
                         if(auto var = getVar(ModelKey::StaActive(this, q, s, t))) {
                             rhs += *var;
@@ -710,21 +694,13 @@ next_t1:
         for(const Station& s : network_.refStations()) {
             for(size_t c = 0; c < coverage_->cellCount(); ++c) {
                 if(auto var = getVar(ModelKey::StaCoverage(this, s, c))) {
-#if 0
-                    if(auto cov = getCov(ModelKey::StaCoverage(this, s, c))) {
-                        if(*cov) {
-                            objSkyCov += co;
-                            continue;
-                        }
-                    }
-#endif
                     objSkyCov += (*var) * co;
                 } else throw UNREACHABLE;
             }
         }
 
 
-        // model_->setObjectiveN(objSkyCov, 0, 2);
+        model_->setObjectiveN(objSkyCov, 0, 2);
 
         // baseline occurrence
         std::map<unsigned long, double> bLength;
@@ -763,7 +739,7 @@ next_t1:
             co /= static_cast<double>(tf - t0);
             for(size_t t = t0; t < tf; ++t) {
                 for(const auto q : sourceList_.getSources()) {
-                    if(sourceMask_.count(q->getId()) == 0) continue;
+                    if(sourceMask.count(q->getId()) == 0) continue;
                     if(auto var = getVar(ModelKey::BlnActive(this, q, b, t))) {
                         objBaselines += (*var) * co;
                     }
@@ -771,9 +747,9 @@ next_t1:
             }
         }
 
-        // model_->setObjectiveN(objBaselines, 1, 1);
+        model_->setObjectiveN(objBaselines, 1, 1);
 
-        model_->setObjective(objSkyCov + objBaselines * 0.4, GRB_MAXIMIZE);
+        // model_->setObjective(objSkyCov + objBaselines * 0.5, GRB_MAXIMIZE);
 
 #ifdef VIESCHEDPP_LOG
             BOOST_LOG_TRIVIAL( info ) << "Finished building ILP model";
@@ -827,37 +803,15 @@ next_t1:
                     // make sure source is visible at this time
                     if(!Model::checkStationVisibility(t, q, s)) continue;
                     Model::ModelKey key = ModelKey::StaActive(this, q, s, t);
-                    auto var = Model::getVar(key);
                     auto sol = Model::getSol(key);
-                    (*sol) = (var->get(GRB_DoubleAttr_X) > 0.5);
+                    if(sourceMask.count(q->getId()) > 0) {
+                        auto var = Model::getVar(key);
+                        (*sol) = (var->get(GRB_DoubleAttr_X) > 0.5);
+                    } else {
+                        (*sol) = false;
+                    }
                 }
             }
-        }
-
-        for(size_t t = t0; t < tf; ++t) {
-            for(const auto q : sourceList_.getSources()) {
-                if(sourceMask_.count(q->getId()) == 0) continue;
-                for(const Baseline& b : network_.getBaselines()) {
-                    Station& s1 = network_.refStation(b.getStaid1());
-                    Station& s2 = network_.refStation(b.getStaid2());
-                    if(!Model::checkStationVisibility(t, q, s1)) continue;
-                    if(!Model::checkStationVisibility(t, q, s2)) continue;
-                    Model::ModelKey key = ModelKey::BlnActive(this, q, b, t);
-                    auto var = Model::getVar(key);
-                    auto sol = Model::getSol(key);
-                    (*sol) = (var->get(GRB_DoubleAttr_X) > 0.5);
-                }
-            }
-        }
-
-        for(const Station& s : network_.getStations()) {
-            for(std::size_t c = 0; c < coverage_->cellCount(); ++c) {
-                Model::ModelKey key = ModelKey::StaCoverage(this, s, c);
-                bool* cov = Model::getCov(key);
-                if(auto var = Model::getVar(key)) {
-                    (*cov) = (*cov) || (var->get(GRB_DoubleAttr_X) > 0.5);
-                }
-            } 
         }
 
         return true;
@@ -888,7 +842,7 @@ next_t1:
                 size_t t20 = (scanTimes.getObservingTime(s2.getId()) + blockLength_ - 1) / blockLength_ + 1;
                 // the number of blocks each station is observing
                 size_t t1f = t10 + scanTimes.getObservingDuration(s1.getId()) / blockLength_ - 1;
-                size_t t2f = t10 + scanTimes.getObservingDuration(s2.getId()) / blockLength_ - 1;
+                size_t t2f = t20 + scanTimes.getObservingDuration(s2.getId()) / blockLength_ - 1;
                 t1f = std::min(t1f, blockCount_);
                 t2f = std::min(t2f, blockCount_);
                 

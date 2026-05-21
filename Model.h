@@ -134,6 +134,11 @@ private:
         std::shared_ptr<const VieVS::AbstractSource> q, 
         Station& s) const noexcept;
 
+    unsigned int Model::calculateSlewTimeExact(Station& s, 
+        const std::shared_ptr<const AbstractSource> q1, 
+        const std::shared_ptr<const AbstractSource> q2,
+        unsigned int t1, unsigned int t2) const noexcept;
+
     size_t calculateSlewTime(Station& s, 
         const std::shared_ptr<const AbstractSource> q1, 
         const std::shared_ptr<const AbstractSource> q2,
@@ -196,12 +201,9 @@ private:
     boost::optional<GRBVar> getVar(const ModelKey& key) const noexcept;
     bool* getSol(const ModelKey& key) noexcept;
     const bool* getSol(const ModelKey& key) const noexcept;
-    bool* getCov(const ModelKey& key) noexcept;
-    const bool* getCov(const ModelKey& key) const noexcept;
 
     GRBVar& addVar(const ModelKey& key, double lb, double ub, double obj, char vtype);
     bool& addSol(const ModelKey& key);
-    bool& addCov(const ModelKey& key);
 
 private:
     struct ScanBuilder {
