@@ -134,7 +134,7 @@ private:
         std::shared_ptr<const VieVS::AbstractSource> q, 
         Station& s) const noexcept;
 
-    unsigned int Model::calculateSlewTimeExact(Station& s, 
+    unsigned int calculateSlewTimeExact(Station& s, 
         const std::shared_ptr<const AbstractSource> q1, 
         const std::shared_ptr<const AbstractSource> q2,
         unsigned int t1, unsigned int t2) const noexcept;
