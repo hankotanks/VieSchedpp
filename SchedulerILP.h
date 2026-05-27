@@ -28,16 +28,8 @@
 #define SCHEDULER_ILP_H
 #include <boost/date_time.hpp>
 #include <boost/optional.hpp>
-#include <memory>
-#include <tuple>
-#include <utility>
-#include <vector>
-#include <unordered_map>
-#include <unordered_set>
-#include <iostream>
-#include <numeric>
-#include <algorithm>
-#include <limits>
+#include <set>
+#include <string>
 
 #include "Initializer.h"
 #include "Model.h"

@@ -27,7 +27,6 @@
 #ifndef MODEL_H
 #define MODEL_H
 #include <cassert>
-#include <stdexcept>
 #include <map>
 #include <type_traits>
 
@@ -247,7 +246,49 @@ private:
     void apply(F op);
     template<typename F>
     void applyBetween(size_t t0, size_t tf, F op);
+#if 0
+private:
+    class SlewCallback : public GRBCallback {
+        friend Model;
+    public:
+        SlewCallback(Model* model, const std::set<unsigned long>& sourceMask, size_t t0, size_t tf) 
+            : model_(model), sourceMask_(sourceMask), t0_(t0), tf_(tf) {}
 
+    protected:
+        void callback() override {
+            if(where != GRB_CB_MIPSOL) return;
+            for(Station& s : model_->network_.refStations()) {
+                for(const auto q1 : model_->sourceList_.getSources()) {
+                    if(!sourceMask_.count(q1->getId())) continue;
+                    for(const auto q2 : model_->sourceList_.getSources()) {
+                        if(!sourceMask_.count(q2->getId())) continue;
+                        if(q1->getId() == q2->getId()) continue;
+                        for(size_t t1 = t0_; t1 < tf_; ++t1) {
+                            auto var1 = model_->getVar(ModelKey::StaActive(model_, q1, s, t1));
+                            if(!var1) continue;
+                            double val1 = getSolution(*var1);
+                            if (val1 < 0.5) continue;
+                            size_t slew = model_->calculateSlewTime(s, q1, q2, t1, tf_);
+                            for(size_t t2 = t1 + 1; t2 <= t1 + slew && t2 < tf_; ++t2) {
+                                auto var2 = model_->getVar(ModelKey::StaActive(model_, q2, s, t2));
+                                if(!var2) continue;
+                                double val2 = getSolution(*var2);
+                                if(val2 > 0.5) {
+                                    addLazy(*var1 + *var2 <= 1);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+    private:
+        std::set<unsigned long> sourceMask_;
+        size_t t0_, tf_;
+        Model* model_;
+    };
+#endif
 private:
     bool optimizeBetween(size_t t0, size_t tf);
 

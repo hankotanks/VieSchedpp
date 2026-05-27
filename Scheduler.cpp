@@ -578,7 +578,7 @@ void Scheduler::start() noexcept {
 #endif
 
         // restart schedule
-        start();
+        Scheduler::start();
     } else {
         if ( parameters_.idleToObservingTime ) {
             switch ( ScanTimes::getAlignmentAnchor() ) {

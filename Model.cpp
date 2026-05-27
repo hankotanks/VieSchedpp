@@ -22,8 +22,8 @@
 #include <memory>
 #include <numeric>
 #include <stdexcept>
-#include <tuple>
 #include <vector>
+#include <optional>
 
 #ifdef WITH_GUROBI
 #include "gurobi_c++.h"
@@ -83,11 +83,11 @@ namespace VieVS {
         unsigned int blockLength, unsigned int windowLength) : 
         network_(network), sourceList_(sourceList), sourceMask_(sourceMask), 
         blockLength_(blockLength), 
-        blockCount_(TimeSystem::duration / blockLength - 1),
+        blockCount_(TimeSystem::duration / blockLength),
         windowLength_(windowLength), 
         windowBlockCount_((windowLength + blockLength - 1) / blockLength),
         // TODO: This may need a +1
-        windowCount_((windowLength + TimeSystem::duration - blockLength * 3 - 1) / (windowLength - 1)) {
+        windowCount_(((TimeSystem::duration / blockLength) - 3) / ((windowLength + blockLength - 1) / blockLength - 2) + 1) {
         coverage_ = std::make_unique<ModelCoverage13>();
 #ifdef WITH_GUROBI
         initGurobi(env_);
@@ -153,7 +153,7 @@ namespace VieVS {
     bool Model::optimize(void) {
 #ifdef WITH_GUROBI
         for (size_t i = 0; i < windowCount_; ++i) {
-            size_t t0 = i * (windowBlockCount_ - 1);
+            size_t t0 = i * (windowBlockCount_ - 2);
             size_t tf = std::min(t0 + windowBlockCount_, blockCount_);
             if(!Model::optimizeBetween(t0, tf)) return false;
         }
@@ -387,6 +387,7 @@ namespace VieVS {
 #endif
 
         std::set<unsigned long> sourceMask;
+#if 0
         {
             static constexpr size_t sourceMaskWindow = 2;
             size_t t_start = (windowBlockCount_ * sourceMaskWindow > t0) ? 0 : (t0 - windowBlockCount_ * sourceMaskWindow);
@@ -407,6 +408,9 @@ next_q:
                 (void) nullptr;
             }
         }
+#else
+        sourceMask = sourceMask_;
+#endif
 
         // StaActive
         size_t count = 0;
@@ -506,21 +510,6 @@ next_c:
         model_->update();
 
 #if 0
-        {
-            GRBLinExpr lhs;
-            for(size_t t = t0; t < tf; ++t) {
-                for(const auto q : sourceList_.getSources()) {
-                    for(const Baseline& b : network_.getBaselines()) {
-                        if(auto var = getVar(ModelKey::BlnActive(this, q, b, t))) {
-                            lhs += (*var);
-                        }
-                    }
-                }
-            }
-            model_->addConstr(lhs >= static_cast<double>(count_bln_active), "cb_bln_preserve");
-        }
-#endif
-
         // s can only observe one q at time t
         count = 0;
         for(size_t t = t0; t < tf; ++t) {
@@ -545,6 +534,8 @@ next_c:
         BOOST_LOG_TRIVIAL( info ) << "Added " << count << " observation exclusivity constraints to model";
 #else
         std::cout << "[info] Added " << count << " observation exclusivity constraints to model";
+#endif
+
 #endif
 
         // if s is observing q at t,
@@ -622,28 +613,23 @@ next_b:
         for(Station& s : network_.refStations()) {
             for(const auto q1 : sourceList_.getSources()) {
                 if(sourceMask.count(q1->getId()) == 0) continue;
-                for(const auto q2 : sourceList_.getSources()) {
-                    if(sourceMask.count(q2->getId()) == 0) continue;
-                    if(q1->getId() == q2->getId()) continue;
-                    for(size_t t1 = t0; t1 < tf; ++t1) {
-                        for(size_t t2 = t1 + 1; t2 < tf; ++t2) {
+                for(size_t t1 = t0; t1 < tf; ++t1) {
+                    auto lhs = getVar(ModelKey::StaActive(this, q1, s, t1));
+                    if(!lhs) continue;
+                    GRBLinExpr rhs;
+                    for(const auto q2 : sourceList_.getSources()) {
+                        if(sourceMask.count(q2->getId()) == 0) continue;
+                        if(q1->getId() == q2->getId()) continue;
+                        for(size_t t2 = t0; t2 <= t1; ++t2) {
                             size_t slew = Model::calculateSlewTime(s, q1, q2, t1, t2);
-                            if(t2 - t1 > slew) continue;
-                            GRBLinExpr lhs;
-                            if(auto var = getVar(ModelKey::StaActive(this, q1, s, t1))) {
-                                lhs += *var;
-                            } else goto next_t1;
+                            if(t1 - t2 > slew) continue;
                             if(auto var = getVar(ModelKey::StaActive(this, q2, s, t2))) {
-                                lhs += *var;
-                            } else goto next_t2;
-                            model_->addConstr(lhs <= 1, "c3_slew");
-                            count++;
-next_t2:
-                            (void) nullptr;
+                                rhs += *var;
+                            }
                         }
-next_t1:
-                        (void) nullptr;
                     }
+                    model_->addGenConstrIndicator(*lhs, 1, rhs == 0, "c3_slew");
+                    count++;
                 }
             }
         }
@@ -700,7 +686,7 @@ next_t1:
         }
 
 
-        model_->setObjectiveN(objSkyCov, 0, 2);
+        // model_->setObjectiveN(objSkyCov, 0, 2);
 
         // baseline occurrence
         std::map<unsigned long, double> bLength;
@@ -747,9 +733,25 @@ next_t1:
             }
         }
 
-        model_->setObjectiveN(objBaselines, 1, 1);
+        GRBLinExpr objObs;
+        co = 1.0 / static_cast<double>(network_.getNSta() * (tf - t0));
+        for(const Station& s : network_.getStations()) {
+            for(size_t t = t0; t < tf; ++t) {
+                for(const auto q : sourceList_.getSources()) {
+                    if(auto var = getVar(ModelKey::StaActive(this, q, s, t))) {
+                        objObs += co * (*var);
+                    }
+                }
+            }
+        }
 
-        // model_->setObjective(objSkyCov + objBaselines * 0.5, GRB_MAXIMIZE);
+        // model_->setObjectiveN(objObs, 1, 1);
+
+        model_->setObjective(objSkyCov + objBaselines * 0.5, GRB_MAXIMIZE);
+
+        // model_->set(GRB_IntParam_LazyConstraints, 1);
+        // SlewCallback* cb = new SlewCallback(this, sourceMask, t0, tf);
+        // model_->setCallback(cb);
 
 #ifdef VIESCHEDPP_LOG
             BOOST_LOG_TRIVIAL( info ) << "Finished building ILP model";
@@ -803,6 +805,19 @@ next_t1:
                     // make sure source is visible at this time
                     if(!Model::checkStationVisibility(t, q, s)) continue;
                     Model::ModelKey key = ModelKey::StaActive(this, q, s, t);
+                    auto sol = Model::getSol(key);
+                    if(sourceMask.count(q->getId()) > 0) {
+                        auto var = Model::getVar(key);
+                        (*sol) = (var->get(GRB_DoubleAttr_X) > 0.5);
+                    } else {
+                        (*sol) = false;
+                    }
+                }
+                for(Baseline& b : network_.refBaselines()) {
+                    // make sure source is visible at this time
+                    if(!Model::checkStationVisibility(t, q, network_.refStation(b.getStaid1()))) continue;
+                    if(!Model::checkStationVisibility(t, q, network_.refStation(b.getStaid2()))) continue;
+                    Model::ModelKey key = ModelKey::BlnActive(this, q, b, t);
                     auto sol = Model::getSol(key);
                     if(sourceMask.count(q->getId()) > 0) {
                         auto var = Model::getVar(key);
