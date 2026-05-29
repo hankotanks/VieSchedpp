@@ -82,6 +82,7 @@ public:
      */
     Model(VieVS::Network& network, VieVS::SourceList& sourceList, 
         const std::set<unsigned long>& sourceMask, 
+        const std::shared_ptr<const ObservingMode>& modes,
         unsigned int blockLength, unsigned int windowLength);
 
     /**
@@ -97,8 +98,9 @@ public:
     template<typename T>
     Model(VieVS::Network& network, VieVS::SourceList& sourceList, 
         const std::set<unsigned long>& sourceMask, 
+        const std::shared_ptr<const ObservingMode>& modes,
         unsigned int blockLength, unsigned int windowLength) : 
-        Model(network, sourceList, sourceMask, blockLength, windowLength) {
+        Model(network, sourceList, sourceMask, modes, blockLength, windowLength) {
             static_assert(std::is_base_of<ModelCoverage, T>::value, "unreachable");
             coverage_ = std::make_unique<T>();
         }
@@ -133,6 +135,16 @@ private:
         std::shared_ptr<const VieVS::AbstractSource> q, 
         Station& s) const noexcept;
 
+    unsigned int calculateMinObsExact(unsigned int t,
+        const std::shared_ptr<const AbstractSource>& q,
+        Baseline& b,
+        const std::shared_ptr<const Mode> &mode);
+
+    size_t calculateMinObs(size_t t,
+        const std::shared_ptr<const AbstractSource>& q,
+        Baseline& b,
+        const std::shared_ptr<const Mode> &mode);
+
     unsigned int calculateSlewTimeExact(Station& s, 
         const std::shared_ptr<const AbstractSource> q1, 
         const std::shared_ptr<const AbstractSource> q2,
@@ -148,6 +160,7 @@ private:
     VieVS::Network& network_;
     VieVS::SourceList& sourceList_;
     std::set<unsigned long> sourceMask_;
+    std::shared_ptr<const ObservingMode> modes_;
     // number of segments in schedule
     size_t blockCount_;
     // the size of each time segment (in seconds)

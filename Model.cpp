@@ -80,8 +80,9 @@ namespace {
 namespace VieVS {
     Model::Model(VieVS::Network& network, VieVS::SourceList& sourceList, 
         const std::set<unsigned long>& sourceMask, 
+        const std::shared_ptr<const ObservingMode>& modes,
         unsigned int blockLength, unsigned int windowLength) : 
-        network_(network), sourceList_(sourceList), sourceMask_(sourceMask), 
+        network_(network), sourceList_(sourceList), sourceMask_(sourceMask), modes_(modes),
         blockLength_(blockLength), 
         blockCount_(TimeSystem::duration / blockLength),
         windowLength_(windowLength), 
@@ -236,6 +237,104 @@ namespace VieVS {
         pvf.setTime((t + 1) * blockLength_ - 1);
         s.calcAzEl_rigorous( q, pvf);
         return s.isVisible(pvf, q->getPARA().minElevation);
+    }
+
+    unsigned int Model::calculateMinObsExact(unsigned int t,
+        const std::shared_ptr<const AbstractSource>& q,
+        Baseline& b,
+        const std::shared_ptr<const Mode> &mode) {
+        boost::optional<unsigned int> fixedScanDuration = q->getPARA().fixedScanDuration;
+        if(auto fixedScanDuration = q->getPARA().fixedScanDuration) {
+            return *fixedScanDuration;
+        }
+
+        unsigned long staid1 = b.getStaid1();
+        Station &sta1 = network_.refStation(staid1);
+        unsigned long staid2 = b.getStaid2();
+        Station &sta2 = network_.refStation( staid2 );
+
+        // calculate greenwhich meridian sedirial time
+        double date1 = 2400000.5;
+        double date2 = TimeSystem::mjdStart + static_cast<double>( t ) / 86400.0;
+        double gmst = iauGmst82( date1, date2 );
+
+        unsigned int maxDuration = 0;
+        for(auto &band : mode->getAllBands()) {
+            double SEFD_src;
+            if ( q->hasFluxInformation( band ) ) {
+                // calculate observed flux density for each band
+                SEFD_src = q->observedFlux( band, t, gmst, network_.getDxyz( staid1, staid2 ) );
+            } else if ( ObservingMode::sourceBackup[band] == ObservingMode::Backup::internalModel ) {
+                // calculate observed flux density based on model
+                double wavelength = ObservingMode::wavelengths[band];
+                SEFD_src = q->observedFlux_model( wavelength, t, gmst, network_.getDxyz( staid1, staid2 ) );
+            } else {
+                SEFD_src = 1e-3;
+            }
+
+
+            if ( SEFD_src == 0 ) {
+                SEFD_src = 1e-3;
+            }
+
+            PointingVector pv1(staid1, q->getId());
+            PointingVector pv2(staid2, q->getId());
+
+            pv1.setTime(t);
+            pv2.setTime(t);
+            sta1.calcAzEl_rigorous(q, pv1);
+            sta2.calcAzEl_rigorous(q, pv2);
+
+            // calculate system equivalent flux density for each station
+            double el1 = pv1.getEl();
+            double SEFD_sta1 = sta1.getEquip().getSEFD( band, el1 );
+            double el2 = pv2.getEl();
+            double SEFD_sta2 = sta2.getEquip().getSEFD( band, el2 );
+
+            // get minimum required SNR for each station, baseline and source
+            double minSNR_sta1 = sta1.getPARA().minSNR.at( band );
+            double minSNR_sta2 = sta2.getPARA().minSNR.at( band );
+            double minSNR_bl = b.getParameters().minSNR.at( band );
+            double minSNR_src = q->getPARA().minSNR.at( band );
+
+            // maximum required minSNR
+            double maxminSNR = std::max( { minSNR_src, minSNR_bl, minSNR_sta1, minSNR_sta2 } );
+
+            // get maximum correlator synchronization time for
+            double maxCorSynch1 = sta1.getPARA().midob;
+            double maxCorSynch2 = sta2.getPARA().midob;
+            double maxCorSynch = std::max( { maxCorSynch1, maxCorSynch2 } );
+
+            // calc required baseline scan duration
+            double efficiency = mode->efficiency( sta1.getId(), sta2.getId() );
+            double anum = ( maxminSNR / ( SEFD_src * efficiency ) );
+            double anu1 = SEFD_sta1 * SEFD_sta2;
+            double anu2 = mode->recordingRate( staid1, staid2, band );
+            if ( anu2 == 0 ) {
+                return std::numeric_limits<unsigned int>::max();
+            }
+            double new_duration = anum * anum * anu1 / anu2 + maxCorSynch;
+            new_duration = ceil( new_duration );
+            auto new_duration_uint = static_cast<unsigned int>( new_duration );
+
+            // check if required baseline scan duration is within min and max scan times of baselines
+            unsigned int minScanBl = b.getParameters().minScan;
+            if ( new_duration_uint < minScanBl ) {
+                new_duration_uint = minScanBl;
+            }
+            unsigned int maxScanBl = b.getParameters().maxScan;
+            if(new_duration_uint > maxDuration) {
+                maxDuration = new_duration_uint;
+            }
+        }
+        return maxDuration;
+    }
+
+    size_t Model::calculateMinObs(size_t t,
+        const std::shared_ptr<const AbstractSource>& q,
+        Baseline& b,
+        const std::shared_ptr<const Mode> &mode) {
+        return (Model::calculateMinObsExact(t * blockLength_, q, b, mode) + blockLength_ - 1) / blockLength_;
     }
 
     unsigned int Model::calculateSlewTimeExact(Station& s, 
@@ -438,7 +537,6 @@ next_q:
         std::cout << "[info] Added " << count << " StaActive variables to model";
 #endif
 
-        size_t count_bln_active = 0;
         // BlnActive
         count = 0;
         for(size_t t = t0; t < tf; ++t) {
@@ -453,12 +551,8 @@ next_q:
                     GRBVar& var = Model::addVar(key, 0.0, 1.0, 0.0, GRB_BINARY);
                     var.set(GRB_DoubleAttr_Start, 0.0);
                     if(auto sol = Model::getSol(key)) {
-                        if(*sol) {
-                            var.set(GRB_DoubleAttr_Start, 1.0);
-                            count_bln_active++;
-                        }
+                        if(*sol) var.set(GRB_DoubleAttr_Start, 1.0);
                     }
-                    
                     count++;
                 }
             }
@@ -550,7 +644,7 @@ next_c:
                     size_t rhsCount = 0;
                     if(auto var = getVar(ModelKey::StaActive(this, q, s1, t))) {
                         lhs = *var;
-                    } else goto next_s;
+                    } else continue;
                     for(const Station& s2 : network_.getStations()) {
                         if(s1.getId() == s2.getId()) continue;
                         if(auto var = getVar(ModelKey::StaActive(this, q, s2, t))) {
@@ -559,12 +653,10 @@ next_c:
                         }
                     }
                     if(rhsCount > 0) {
-                        model_->addConstr(lhs <= rhs, "c1_pairwise");
+                        // model_->addConstr(lhs <= rhs, "c1_pairwise");
+                        model_->addConstr(rhs >= (q->getPARA().minNumberOfSites - 1) * lhs, "c1_pairwise");
                         count++;
                     }
-                    
-next_s:
-                    (void) nullptr;
                 }
             }
         }
@@ -573,6 +665,44 @@ next_s:
         BOOST_LOG_TRIVIAL( info ) << "Added " << count << " pairwise observation constraints to model";
 #else
         std::cout << "[info] Added " << count << " pairwise observation constraints to model";
+#endif
+
+#if 0
+        // loop over all Modes in the configuration
+        // for each pair of baselines at each timestep wrt to each source
+        // calculate the required observation time for each mode in the configuration
+        // we require at least one mode to be feasible for this baseline in order for either to be active
+        for(size_t t1 = t0; t1 < tf; ++t1) {
+            for(const auto q : sourceList_.getSources()) {
+                if(sourceMask.count(q->getId()) == 0) continue;
+                for(Baseline& b : network_.refBaselines()) {
+                    GRBVar lhs;
+                    GRBLinExpr rhs;
+                    if(auto var = getVar(ModelKey::BlnActive(this, q, b, t1))) {
+                        lhs = *var;
+                    } else continue;
+                    size_t t_obs = std::numeric_limits<size_t>::max();
+                    for(auto& mode : modes_->getModes()) {
+                        t_obs = std::min(t_obs, Model::calculateMinObs(t1, q, b, mode));
+                    }
+                    for(size_t t2 = t1 + 1; t2 < std::min(t1 + t_obs, tf); ++t2) {
+                        if(auto var = getVar(ModelKey::BlnActive(this, q, b, t2))) {
+                            if(var->get(GRB_DoubleAttr_UB) < 0.5) {
+                                rhs.clear();
+                                break;
+                            }
+                            rhs += *var;
+                        } else {
+                            rhs.clear();
+                            break;
+                        }
+                    }
+                    if(rhs.size() > 0) {
+                        model_->addGenConstrIndicator(lhs, 1, rhs >= (t_obs - 1), "c1000_snr");
+                    }
+                }
+            }
+        }
 #endif
 
         // if <s1, s2> is active at t, both must observe q at t
@@ -586,7 +716,7 @@ next_s:
                     GRBVar lhs, rhs;
                     if(auto var = getVar(ModelKey::BlnActive(this, q, b, t))) {
                         lhs = *var;
-                    } else goto next_b;
+                    } else goto c2_baseline_next_b;
                     if(auto var = getVar(ModelKey::StaActive(this, q, s1, t))) {
                         rhs = *var;
                     } else throw UNREACHABLE;
@@ -596,7 +726,7 @@ next_s:
                     } else throw UNREACHABLE;
                     model_->addConstr(lhs <= rhs, "c2_baseline");
                     count += 2;
-next_b:
+c2_baseline_next_b:
                     (void) nullptr;
                 }
             }
@@ -621,8 +751,8 @@ next_b:
                         if(sourceMask.count(q2->getId()) == 0) continue;
                         if(q1->getId() == q2->getId()) continue;
                         for(size_t t2 = t0; t2 <= t1; ++t2) {
-                            size_t slew = Model::calculateSlewTime(s, q1, q2, t1, t2);
-                            if(t1 - t2 > slew) continue;
+                            size_t t_slew = Model::calculateSlewTime(s, q1, q2, t1, t2);
+                            if(t1 - t2 > t_slew) continue;
                             if(auto var = getVar(ModelKey::StaActive(this, q2, s, t2))) {
                                 rhs += *var;
                             }
@@ -747,7 +877,7 @@ next_b:
 
         // model_->setObjectiveN(objObs, 1, 1);
 
-        model_->setObjective(objSkyCov + objBaselines * 0.5, GRB_MAXIMIZE);
+        model_->setObjective(objSkyCov + objBaselines * 0.25, GRB_MAXIMIZE);
 
         // model_->set(GRB_IntParam_LazyConstraints, 1);
         // SlewCallback* cb = new SlewCallback(this, sourceMask, t0, tf);
@@ -904,6 +1034,29 @@ next_b:
                 }
             }
         }
+
+        // disable observations that don't respect the minNumberOfSites parameter due to discretization
+        for(const auto q : sourceList_.getSources()) {
+            if(sourceMask_.count(q->getId()) == 0) continue;
+            unsigned int minNumberOfSites = q->getPARA().minNumberOfSites;
+            for(size_t t = 0; t < blockCount_; ++t) {
+                size_t active = 0;
+                for(const Station& s : network_.getStations()) {
+                    if(auto sol = getSol(ModelKey::StaActive(this, q, s, t))) {
+                        if(*sol) ++active;
+                    }
+                }
+                if(active < minNumberOfSites) {
+                    for(const Station& s : network_.getStations()) {
+                        if(auto sol = getSol(ModelKey::StaActive(this, q, s, t))) {
+                            *sol = false;
+                        }
+                    }
+                }
+            } 
+        }
+
+        
 
 #ifdef VIESCHEDPP_LOG
         BOOST_LOG_TRIVIAL( info ) << "Loaded preliminary result into ILP model";
