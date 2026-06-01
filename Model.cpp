@@ -770,6 +770,40 @@ c2_baseline_next_b:
         std::cout << "[info] Added " << count << " slew constraints to model";
 #endif
 
+        // maxScan
+        count = 0;
+        for(Station& s : network_.refStations()) {
+            for(const auto q : sourceList_.getSources()) {
+                if(sourceMask.count(q->getId()) == 0) continue;
+                for(size_t t2 = t0; t2 < tf; ++t2) {
+                    size_t maxScan = (std::min(q->getPARA().maxScan, s.getPARA().maxScan) + blockLength_ - 1) / blockLength_;
+                    if(t2 < maxScan) continue;
+                    // look backwards by minScan segments and forbid
+                    GRBLinExpr lhs;
+                    for(size_t k = 0; k <= maxScan; ++k) {
+                        size_t t1 = t2 - k;
+                        if(t1 < t0) {
+                            if(auto sol = getSol(ModelKey::StaActive(this, q, s, t1))) {
+                                if(*sol) {
+                                    --maxScan;
+                                } else break;
+                            } else break;
+                        } else if(auto var = getVar(ModelKey::StaActive(this, q, s, t1))) {
+                            lhs += *var;
+                        }
+                    }
+                    model_->addConstr(lhs <= maxScan - 1, "c6_max_scan");
+                    ++count;
+                }
+            }
+        }
+
+#ifdef VIESCHEDPP_LOG
+        BOOST_LOG_TRIVIAL( info ) << "Added " << count << " max scan duration constraints to model";
+#else
+        std::cout << "[info] Added " << count << " max scan duration constraints to model";
+#endif
+
         // c is 'hit' if >= observations occurred over schedule duration
         count = 0;
         for(Station& s : network_.refStations()) {
@@ -816,7 +850,7 @@ c2_baseline_next_b:
         }
 
 
-        // model_->setObjectiveN(objSkyCov, 0, 2);
+        model_->setObjectiveN(objSkyCov, 0, 2);
 
         // baseline occurrence
         std::map<unsigned long, double> bLength;
@@ -875,9 +909,13 @@ c2_baseline_next_b:
             }
         }
 
-        // model_->setObjectiveN(objObs, 1, 1);
+        model_->setObjectiveN(objObs, 1, 1);
 
-        model_->setObjective(objSkyCov + objBaselines * 0.25, GRB_MAXIMIZE);
+        GRBEnv env = model_->getMultiobjEnv(1);
+        // env.set(GRB_DoubleParam_TimeLimit, 60.0);
+        env.set(GRB_DoubleParam_NodeLimit, 100000);
+
+        // model_->setObjective(objSkyCov + objBaselines * 0.25, GRB_MAXIMIZE);
 
         // model_->set(GRB_IntParam_LazyConstraints, 1);
         // SlewCallback* cb = new SlewCallback(this, sourceMask, t0, tf);
@@ -912,7 +950,7 @@ c2_baseline_next_b:
         }
 
         // error checking
-        if(status != GRB_OPTIMAL) {
+        if (status != GRB_OPTIMAL && status != GRB_SUBOPTIMAL) {
 #ifdef VIESCHEDPP_LOG
             BOOST_LOG_TRIVIAL( info ) << "No optimal solution found between " << t0 * blockLength_ << " and " << tf * blockLength_;
 #else
