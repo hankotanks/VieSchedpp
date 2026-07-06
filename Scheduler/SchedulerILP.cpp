@@ -22,9 +22,9 @@
 #include <memory>
 #include <stdexcept>
 
-#include "Output/Output.h"
+#include "../Output/Output.h"
+#include "../Source/AbstractSource.h"
 #include "Scheduler.h"
-#include "Source/AbstractSource.h"
 
 #ifdef WITH_GUROBI
 #include <gurobi_c++.h>

@@ -21,16 +21,10 @@
 #include <limits>
 #include <memory>
 #include <numeric>
-#include <stdexcept>
-#include <vector>
-#include <optional>
 
 #ifdef WITH_GUROBI
 #include "gurobi_c++.h"
 #endif // WITH_GUROBI
-
-#include "Misc/TimeSystem.h"
-#include "Scan/PointingVector.h"
 
 #define UNREACHABLE std::logic_error((boost::format("unreachable: %d") % __LINE__).str())
 
@@ -82,16 +76,13 @@ void Model::prepare(size_t t0, size_t tf) {
 void Model::constrExclusive(size_t t0, size_t tf) {
     // s can only observe one q at time t
     size_t count = 0;
-    for(size_t t = t0; t < tf; ++t) {
-        for(const Station& s : network_.getStations()) {
+    for(size_t t : ModelBase::getBlocks(t0, tf)) {
+        for(Station& s : ModelBase::getStations()) {
             GRBLinExpr lhs;
             size_t lhsCount = 0;
-            for(const auto q : sourceList_.getSources()) {
-                if(sourceMask_.count(q->getId()) == 0) continue;
-                if(auto var = getVar(ModelKey::StaActive(this, q, s, t))) {
-                    lhs += *var;
-                    lhsCount++;
-                }
+            for(const auto q : ModelBase::getSources(t, s)) {
+                lhs += *getVar(ModelKey::StaActive(this, q, s, t));
+                lhsCount++;
             }
             if(lhsCount > 0) {
                 model_->addConstr(lhs <= 1, "c0_exclusive");
@@ -110,27 +101,18 @@ void Model::constrExclusive(size_t t0, size_t tf) {
 void Model::constrBaseline(size_t t0, size_t tf) {
     // if <s1, s2> is active at t, both must observe q at t
     size_t count = 0;
-    for(size_t t = t0; t < tf; ++t) {
-        for(const auto q : sourceList_.getSources()) {
-            if(sourceMask_.count(q->getId()) == 0) continue;
-            for(const Baseline& b : network_.getBaselines()) {
+    for(size_t t : ModelBase::getBlocks(t0, tf)) {
+        for(const auto q : ModelBase::getSources()) {
+            for(const Baseline& b : ModelBase::getBaselines(t, q)) {
                 const Station& s1 = network_.getStation(b.getStaid1());
                 const Station& s2 = network_.getStation(b.getStaid2());
                 GRBVar lhs, rhs;
-                if(auto var = getVar(ModelKey::BlnActive(this, q, b, t))) {
-                    lhs = *var;
-                } else goto c2_baseline_next_b;
-                if(auto var = getVar(ModelKey::StaActive(this, q, s1, t))) {
-                    rhs = *var;
-                } else throw UNREACHABLE;
+                lhs = *getVar(ModelKey::BlnActive(this, q, b, t));
+                rhs = *getVar(ModelKey::StaActive(this, q, s1, t));
                 model_->addConstr(lhs <= rhs, "c2_baseline");
-                if(auto var = getVar(ModelKey::StaActive(this, q, s2, t))) {
-                    rhs = *var;
-                } else throw UNREACHABLE;
+                rhs = *getVar(ModelKey::StaActive(this, q, s2, t));
                 model_->addConstr(lhs <= rhs, "c2_baseline");
                 count += 2;
-c2_baseline_next_b:
-                (void) nullptr;
             }
         }
     }
@@ -146,25 +128,18 @@ void Model::constrPairwise(size_t t0, size_t tf) {
     // if s is observing q at t,
     // >= other station must be active for the same q, t
     size_t count = 0;
-    for(size_t t = t0; t < tf; ++t) {
-        for(const auto q : sourceList_.getSources()) {
-            if(sourceMask_.count(q->getId()) == 0) continue;
-            for(const Station& s1 : network_.getStations()) {
-                GRBVar lhs;
+    for(size_t t : ModelBase::getBlocks(t0, tf)) {
+        for(const auto q : ModelBase::getSources()) {
+            for(const Station& s1 : ModelBase::getStations(t, q)) {
+                GRBVar lhs = *getVar(ModelKey::StaActive(this, q, s1, t));
                 GRBLinExpr rhs;
                 size_t rhsCount = 0;
-                if(auto var = getVar(ModelKey::StaActive(this, q, s1, t))) {
-                    lhs = *var;
-                } else continue;
-                for(const Station& s2 : network_.getStations()) {
+                for(const Station& s2 : ModelBase::getStations(t, q)) {
                     if(s1.getId() == s2.getId()) continue;
-                    if(auto var = getVar(ModelKey::StaActive(this, q, s2, t))) {
-                        rhs += *var;
-                        rhsCount++;
-                    }
+                    rhs += *getVar(ModelKey::StaActive(this, q, s2, t));
+                    rhsCount++;
                 }
                 if(rhsCount > 0) {
-                    // model_->addConstr(lhs <= rhs, "c1_pairwise");
                     model_->addConstr(rhs >= std::max(static_cast<unsigned int>(2), q->getPARA().minNumberOfSites - 1) * lhs, "c1_pairwise");
                     count++;
                 }
@@ -181,10 +156,9 @@ void Model::constrPairwise(size_t t0, size_t tf) {
 
 void Model::constrDuration(size_t t0, size_t tf) {
     size_t count = 0;
-    for(Station& s : network_.refStations()) {
-        for(const auto q : sourceList_.getSources()) {
-            if(sourceMask_.count(q->getId()) == 0) continue;
-            for(size_t t2 = t0; t2 < tf; ++t2) {
+    for(Station& s : ModelBase::getStations()) {
+        for(const auto q : ModelBase::getSources()) {
+            for(size_t t2 : ModelBase::getBlocks(t0, tf)) {
                 size_t maxScan = (std::min(q->getPARA().maxScan, s.getPARA().maxScan) + blockLength_ - 1) / blockLength_;
                 if(t2 < maxScan) continue;
                 // look backwards by minScan segments and forbid
@@ -220,30 +194,17 @@ void Model::constrSNR(size_t t0, size_t tf) {
     // calculate the required observation time for each mode in the configuration
     // we require at least one mode to be feasible for this baseline in order for either to be active
     size_t count = 0;
-    for(size_t t1 = t0; t1 < tf; ++t1) {
-        for(const auto q : sourceList_.getSources()) {
-            if(sourceMask_.count(q->getId()) == 0) continue;
-            for(Baseline& b : network_.refBaselines()) {
-                GRBVar lhs;
+    for(size_t t1 : ModelBase::getBlocks(t0, tf)) {
+        for(const auto q : ModelBase::getSources()) {
+            for(const Baseline& b : ModelBase::getBaselines()) {
+                GRBVar lhs = *getVar(ModelKey::BlnActive(this, q, b, t1));
                 GRBLinExpr rhs;
-                if(auto var = getVar(ModelKey::BlnActive(this, q, b, t1))) {
-                    lhs = *var;
-                } else continue;
                 size_t t_obs = std::numeric_limits<size_t>::max();
                 for(auto& mode : modes_->getModes()) {
                     t_obs = std::min(t_obs, Model::calculateMinObs(t1, q, b, mode));
                 }
-                for(size_t t2 = t1 + 1; t2 < std::min(t1 + t_obs, tf); ++t2) {
-                    if(auto var = getVar(ModelKey::BlnActive(this, q, b, t2))) {
-                        if(var->get(GRB_DoubleAttr_UB) < 0.5) {
-                            rhs.clear();
-                            break;
-                        }
-                        rhs += *var;
-                    } else {
-                        rhs.clear();
-                        break;
-                    }
+                for(size_t t2 : ModelBase::getBlocks(t1 + 1, std::min(t1 + t_obs, tf), q, b)) {
+                    rhs += *getVar(ModelKey::BlnActive(this, q, b, t2));
                 }
                 if(rhs.size() > 0) {
                     model_->addGenConstrIndicator(lhs, 1, rhs >= (t_obs - 1), "c1000_snr");
@@ -263,25 +224,20 @@ void Model::constrSNR(size_t t0, size_t tf) {
 void Model::constrSlew(size_t t0, size_t tf) {
     // there must be sufficient time in [t1, t2) for s to slew between q1, q2
     size_t count = 0;
-    for(Station& s : network_.refStations()) {
-        for(const auto q1 : sourceList_.getSources()) {
-            if(sourceMask_.count(q1->getId()) == 0) continue;
-            for(size_t t1 = t0; t1 < tf; ++t1) {
-                auto lhs = getVar(ModelKey::StaActive(this, q1, s, t1));
-                if(!lhs) continue;
+    for(Station& s : ModelBase::getStations()) {
+        for(const auto q1 : ModelBase::getSources()) {
+            for(size_t t1 : ModelBase::getBlocks(t0, tf, q1, s)) {
+                auto lhs = *getVar(ModelKey::StaActive(this, q1, s, t1));
                 GRBLinExpr rhs;
-                for(const auto q2 : sourceList_.getSources()) {
-                    if(sourceMask_.count(q2->getId()) == 0) continue;
+                for(const auto q2 : ModelBase::getSources()) {
                     if(q1->getId() == q2->getId()) continue;
-                    for(size_t t2 = t0; t2 <= t1; ++t2) {
+                    for(size_t t2 : ModelBase::getBlocks(t0, t1 + 1, q2, s)) {
                         size_t t_slew = Model::calculateSlewTime(s, q1, q2, t1, t2);
                         if(t1 - t2 > t_slew) continue;
-                        if(auto var = getVar(ModelKey::StaActive(this, q2, s, t2))) {
-                            rhs += *var;
-                        }
+                        rhs += *getVar(ModelKey::StaActive(this, q2, s, t2));
                     }
                 }
-                model_->addGenConstrIndicator(*lhs, 1, rhs == 0, "c3_slew");
+                model_->addGenConstrIndicator(lhs, 1, rhs == 0, "c3_slew");
                 count++;
             }
         }
@@ -297,21 +253,16 @@ void Model::constrSlew(size_t t0, size_t tf) {
 void Model::constrCoverage(size_t t0, size_t tf) {
     // c is 'hit' if >= observations occurred over schedule duration
     size_t count = 0;
-    for(Station& s : network_.refStations()) {
+    for(Station& s : ModelBase::getStations()) {
         for(size_t c = 0; c < coverage_->cellCount(); ++c) {
-            GRBLinExpr lhs, rhs;
+            GRBLinExpr lhs = *getVar(ModelKey::StaCoverage(this, s, c));
+            GRBLinExpr rhs;
             size_t rhsCount = 0;
-            if(auto var = getVar(ModelKey::StaCoverage(this, s, c))) {
-                lhs += *var;
-            } else throw UNREACHABLE;
-            for(size_t t = t0; t < tf; ++t) {
-                for(const auto q : sourceList_.getSources()) {
-                    if(sourceMask_.count(q->getId()) == 0) continue;
+            for(size_t t : ModelBase::getBlocks(t0, tf)) {
+                for(const auto q : ModelBase::getSources(t, s)) {
                     if(coverage_->calculateCell(this, t, q, s) != c) continue;
-                    if(auto var = getVar(ModelKey::StaActive(this, q, s, t))) {
-                        rhs += *var;
-                        rhsCount++;
-                    }
+                    rhs += *getVar(ModelKey::StaActive(this, q, s, t));
+                    rhsCount++;
                 }
             }
             if(rhsCount > 0) {
@@ -332,11 +283,9 @@ GRBLinExpr Model::objSkyCov() {
     // coverage objective
     GRBLinExpr obj;
     double co = 1.0 / static_cast<double>(coverage_->cellCount()) / static_cast<double>(network_.getNSta());
-    for(const Station& s : network_.refStations()) {
+    for(const Station& s : ModelBase::getStations()) {
         for(size_t c = 0; c < coverage_->cellCount(); ++c) {
-            if(auto var = getVar(ModelKey::StaCoverage(this, s, c))) {
-                obj += (*var) * co;
-            } else throw UNREACHABLE;
+            obj += *getVar(ModelKey::StaCoverage(this, s, c)) * co;
         }
     }
 
@@ -346,10 +295,9 @@ GRBLinExpr Model::objSkyCov() {
 GRBLinExpr Model::objBaselines(size_t t0, size_t tf) {
     // baseline occurrence
     std::map<unsigned long, double> bLength;
-    for(const Baseline& b : network_.getBaselines()) {
+    for(const Baseline& b : ModelBase::getBaselines()) {
         const Station& s1 = network_.getStation(b.getStaid1());
         const Station& s2 = network_.getStation(b.getStaid2());
-
         double length = s1.getPosition()->getDistance(*s2.getPosition());
         bLength.insert(std::make_pair(b.getId(), length));
     }
@@ -369,7 +317,7 @@ GRBLinExpr Model::objBaselines(size_t t0, size_t tf) {
         [bSum](auto& entry) { entry.second /= bSum; });
 
     GRBLinExpr obj;
-    for(const Baseline& b : network_.getBaselines()) {
+    for(const Baseline& b : ModelBase::getBaselines()) {
         double co = bCo.at(b.getId());
 #ifdef VIESCHEDPP_LOG
     BOOST_LOG_TRIVIAL( info ) << network_.getStation(b.getStaid1()).getName() << 
@@ -379,12 +327,9 @@ GRBLinExpr Model::objBaselines(size_t t0, size_t tf) {
         "-" << network_.getStation(b.getStaid2()).getName() << " weighting: " << co;
 #endif
         co /= static_cast<double>(tf - t0);
-        for(size_t t = t0; t < tf; ++t) {
-            for(const auto q : sourceList_.getSources()) {
-                if(sourceMask_.count(q->getId()) == 0) continue;
-                if(auto var = getVar(ModelKey::BlnActive(this, q, b, t))) {
-                    obj += (*var) * co;
-                }
+        for(size_t t : ModelBase::getBlocks(t0, tf)) {
+            for(const auto q : ModelBase::getSources(t, b)) {
+                obj += *getVar(ModelKey::BlnActive(this, q, b, t)) * co;
             }
         }
     }

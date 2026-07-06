@@ -31,8 +31,8 @@
 #include <set>
 #include <string>
 
-#include "Initializer.h"
-#include "Model.h"
+#include "../Initializer.h"
+#include "../Model/Model.h"
 #include "Scheduler.h"
 
 namespace VieVS {

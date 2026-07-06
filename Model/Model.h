@@ -34,8 +34,8 @@
 
 #include "ModelBase.h"
 
-#include "Source/SourceList.h"
-#include "Station/Network.h"
+#include "../Source/SourceList.h"
+#include "../Station/Network.h"
 
 namespace VieVS {
 /**
@@ -87,10 +87,8 @@ public:
      * @author Hank Lewis
     */
     ~Model() = default;
-
 protected:
     virtual void prepare(size_t t0, size_t tf) override;
-
 private:
 #ifdef WITH_GUROBI
     void constrExclusive(size_t t0, size_t tf);

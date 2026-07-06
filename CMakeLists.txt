@@ -47,10 +47,10 @@
          README.md
          Scan/Scan.cpp Scan/Scan.h
          Scan/ScanTimes.cpp Scan/ScanTimes.h
-         Scheduler.cpp Scheduler.h
-         SchedulerILP.cpp SchedulerILP.h
-         ModelBase.cpp ModelBase.h
-         Model.cpp Model.h
+         Scheduler/Scheduler.cpp Scheduler/Scheduler.h
+         Scheduler/SchedulerILP.cpp Scheduler/SchedulerILP.h
+         Model/ModelBase.cpp Model/ModelBase.h
+         Model/Model.cpp Model/Model.h
          Input/SkdCatalogReader.cpp Input/SkdCatalogReader.h
          Station/SkyCoverage.cpp Station/SkyCoverage.h
          Misc/sofa.h Misc/sofam.h

@@ -27,7 +27,7 @@
 #ifndef OUTPUT_H
 #define OUTPUT_H
 
-#include "../Scheduler.h"
+#include "../Scheduler/Scheduler.h"
 #include "Ast.h"
 #include "OperationNotes.h"
 #include "SNR_table.h"

@@ -25,3 +25,6 @@ CompileFlags:
     - "/usr/include/x86_64-linux-gnu"
     - "-isystem"
     - "/usr/include"
+Diagnostics:
+  Suppress:
+    - "**/boost/**"

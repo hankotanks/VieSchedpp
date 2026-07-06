@@ -20,25 +20,23 @@
 
 #include <limits>
 #include <memory>
-#include <numeric>
 #include <stdexcept>
 #include <vector>
-#include <optional>
 
 #ifdef WITH_GUROBI
 #include "gurobi_c++.h"
 #endif // WITH_GUROBI
 
-#include "Misc/TimeSystem.h"
-#include "Scan/PointingVector.h"
+#include "../Misc/TimeSystem.h"
+#include "../Scan/PointingVector.h"
 
 #define UNREACHABLE std::logic_error((boost::format("unreachable: %d") % __LINE__).str())
 
 namespace {
 #ifdef WITH_GUROBI
-void initGurobi(GRBEnv*& env) {
+void initGurobi(std::unique_ptr<GRBEnv>& env) {
     try {
-        env = new GRBEnv(true);
+        env = std::make_unique<GRBEnv>(true);
         env->start();
 #ifdef VIESCHEDPP_LOG
         BOOST_LOG_TRIVIAL( info ) << "Started GRB environment";
@@ -55,11 +53,9 @@ void initGurobi(GRBEnv*& env) {
     }
 }
 
-void initModel(GRBEnv*& env, GRBModel*& model) {
-    if(model != nullptr) delete model;
-
+void initModel(std::unique_ptr<GRBEnv>& env, std::unique_ptr<GRBModel>& model) {
     try {
-        model = new GRBModel(*env);
+        model = std::make_unique<GRBModel>(*env);
 #ifdef VIESCHEDPP_LOG
         BOOST_LOG_TRIVIAL( info ) << "Initialized GRB model";
 #else
@@ -123,27 +119,18 @@ ModelBase::ModelBase(VieVS::Network& network, VieVS::SourceList& sourceList,
     }
 
     // StaActive
-    for(size_t t = 0; t < blockCount_; ++t) {
-        for(const auto q : sourceList_.getSources()) {
-            if(sourceMask_.count(q->getId()) == 0) continue;
-            for(Station& s : network_.refStations()) {
-                // make sure source is visible at this time
-                if(!ModelBase::checkStationVisibility(t, q, s)) continue;
-                // create variable
+    for(size_t t : ModelBase::getBlocks(0, blockCount_)) {
+        for(const auto q : ModelBase::getSources()) {
+            for(const Station& s : ModelBase::getStations(t, q)) {
                 ModelBase::addSol(ModelKey::StaActive(this, q, s, t));
             }
         }
     }
 
     // BlnActive
-    for(size_t t = 0; t < blockCount_; ++t) {
-        for(const auto q : sourceList_.getSources()) {
-            if(sourceMask_.count(q->getId()) == 0) continue;
-            for(const Baseline& b : network_.getBaselines()) {
-                Station& s1 = network_.refStation(b.getStaid1());
-                Station& s2 = network_.refStation(b.getStaid2());
-                if(!ModelBase::checkStationVisibility(t, q, s1)) continue;
-                if(!ModelBase::checkStationVisibility(t, q, s2)) continue;
+    for(size_t t : ModelBase::getBlocks(0, blockCount_)) {
+        for(const auto q : ModelBase::getSources()) {
+            for(const Baseline& b : ModelBase::getBaselines(t, q)) {
                 ModelBase::addSol(ModelKey::BlnActive(this, q, b, t));
             }
         }
@@ -158,7 +145,6 @@ bool ModelBase::optimize(void) {
         size_t tf = std::min(t0 + windowBlockCount_, blockCount_);
 
         // reinitialize the model
-        if(model_) delete model_;
         initModel(env_, model_);
 
         // clear the variable map
@@ -172,12 +158,9 @@ bool ModelBase::optimize(void) {
 
         // StaActive
         size_t count = 0;
-        for(size_t t = t0; t < tf; ++t) {
-            for(const auto q : sourceList_.getSources()) {
-                if(sourceMask_.count(q->getId()) == 0) continue;
-                for(Station& s : network_.refStations()) {
-                    // make sure source is visible at this time
-                    if(!ModelBase::checkStationVisibility(t, q, s)) continue;
+        for(size_t t : ModelBase::getBlocks(t0, tf)) {
+            for(const auto q : ModelBase::getSources()) {
+                for(Station& s : ModelBase::getStations(t, q)) {
                     // create variable
                     ModelBase::ModelKey key = ModelKey::StaActive(this, q, s, t);
                     GRBVar& var = ModelBase::addVar(key, 0.0, 1.0, 0.0, GRB_BINARY);
@@ -198,14 +181,9 @@ bool ModelBase::optimize(void) {
 
         // BlnActive
         count = 0;
-        for(size_t t = t0; t < tf; ++t) {
-            for(const auto q : sourceList_.getSources()) {
-                if(sourceMask_.count(q->getId()) == 0) continue;
-                for(const Baseline& b : network_.getBaselines()) {
-                    Station& s1 = network_.refStation(b.getStaid1());
-                    Station& s2 = network_.refStation(b.getStaid2());
-                    if(!ModelBase::checkStationVisibility(t, q, s1)) continue;
-                    if(!ModelBase::checkStationVisibility(t, q, s2)) continue;
+        for(size_t t : ModelBase::getBlocks(t0, tf)) {
+            for(const auto q : ModelBase::getSources()) {
+                for(const Baseline& b : ModelBase::getBaselines(t, q)) {
                     ModelBase::ModelKey key = ModelKey::BlnActive(this, q, b, t);
                     GRBVar& var = ModelBase::addVar(key, 0.0, 1.0, 0.0, GRB_BINARY);
                     var.set(GRB_DoubleAttr_Start, 0.0);
@@ -225,7 +203,7 @@ bool ModelBase::optimize(void) {
 
         // StaCoverage
         count = 0;
-        for(const Station& s : network_.getStations()) {
+        for(const Station& s : ModelBase::getStations()) {
             for(std::size_t c = 0; c < coverage_->cellCount(); ++c) {
                 ModelBase::addVar(ModelKey::StaCoverage(this, s, c), 0.0, 1.0, 0.0, GRB_BINARY);
                 count++;
@@ -233,18 +211,15 @@ bool ModelBase::optimize(void) {
         }
 
         // populate StaConverage variables
-        for(Station& s : network_.refStations()) {
+        for(Station& s : ModelBase::getStations()) {
             for(size_t c = 0; c < coverage_->cellCount(); ++c) {
-                for(const auto q : sourceList_.getSources()) {
-                    for(size_t t = t0; t < tf; ++t) {
+                for(const auto q : ModelBase::getSources()) {
+                    for(size_t t : ModelBase::getBlocks(t0, tf, q, s)) {
                         if(coverage_->calculateCell(this, t, q, s) != c) continue;
-                        if(auto sol = getSol(ModelKey::StaActive(this, q, s, t))) {
-                            if(*sol) {
-                                if(auto var = getVar(ModelKey::StaCoverage(this, s, c))) {
-                                    var->set(GRB_DoubleAttr_Start, 1.0);
-                                    goto next_c;
-                                } else throw UNREACHABLE;
-                            }
+                        if(*getSol(ModelKey::StaActive(this, q, s, t))) {
+                            auto var = *getVar(ModelKey::StaCoverage(this, s, c));
+                            var.set(GRB_DoubleAttr_Start, 1.0);
+                            goto next_c;
                         }
                     }
                 }
@@ -292,32 +267,18 @@ next_c:
 
         // copy results back into solution
         for(size_t t = t0; t < tf; ++t) {
-            for(const auto q : sourceList_.getSources()) {
-                if(sourceMask_.count(q->getId()) == 0) continue;
-                for(Station& s : network_.refStations()) {
-                    // make sure source is visible at this time
-                    if(!ModelBase::checkStationVisibility(t, q, s)) continue;
+            for(const auto q : ModelBase::getSources()) {
+                for(Station& s : ModelBase::getStations(t, q)) {
                     ModelBase::ModelKey key = ModelKey::StaActive(this, q, s, t);
                     auto sol = ModelBase::getSol(key);
-                    if(sourceMask_.count(q->getId()) > 0) {
-                        auto var = ModelBase::getVar(key);
-                        (*sol) = (var->get(GRB_DoubleAttr_X) > 0.5);
-                    } else {
-                        (*sol) = false;
-                    }
+                    auto var = ModelBase::getVar(key);
+                    (*sol) = (var->get(GRB_DoubleAttr_X) > 0.5);
                 }
-                for(Baseline& b : network_.refBaselines()) {
-                    // make sure source is visible at this time
-                    if(!ModelBase::checkStationVisibility(t, q, network_.refStation(b.getStaid1()))) continue;
-                    if(!ModelBase::checkStationVisibility(t, q, network_.refStation(b.getStaid2()))) continue;
+                for(const Baseline& b : ModelBase::getBaselines(t, q)) {
                     ModelBase::ModelKey key = ModelKey::BlnActive(this, q, b, t);
                     auto sol = ModelBase::getSol(key);
-                    if(sourceMask_.count(q->getId()) > 0) {
-                        auto var = ModelBase::getVar(key);
-                        (*sol) = (var->get(GRB_DoubleAttr_X) > 0.5);
-                    } else {
-                        (*sol) = false;
-                    }
+                    auto var = ModelBase::getVar(key);
+                    (*sol) = (var->get(GRB_DoubleAttr_X) > 0.5);
                 }
             }
         }
@@ -405,7 +366,7 @@ bool ModelBase::checkStationVisibility(size_t t,
 
 unsigned int ModelBase::calculateMinObsExact(unsigned int t,
     const std::shared_ptr<const AbstractSource>& q,
-    Baseline& b,
+    const Baseline& b,
     const std::shared_ptr<const Mode> &mode) {
     boost::optional<unsigned int> fixedScanDuration = q->getPARA().fixedScanDuration;
     if(auto fixedScanDuration = q->getPARA().fixedScanDuration) {
@@ -495,7 +456,7 @@ unsigned int ModelBase::calculateMinObsExact(unsigned int t,
 
 size_t ModelBase::calculateMinObs(size_t t,
     const std::shared_ptr<const AbstractSource>& q,
-    Baseline& b,
+    const Baseline& b,
     const std::shared_ptr<const Mode> &mode) {
     return (ModelBase::calculateMinObsExact(t * blockLength_, q, b, mode) + blockLength_ - 1) / blockLength_;
 }
@@ -530,6 +491,102 @@ size_t ModelBase::calculateSlewTime(Station& s,
     size_t t1, size_t t2) const noexcept {
     unsigned int t = ModelBase::calculateSlewTimeExact(s, q1, q2, t1 * blockLength_ + blockLength_, t2 * blockLength_);
     return (t + blockLength_ - 1) / blockLength_;
+}
+
+std::vector<size_t> ModelBase::getBlocks(size_t t0, size_t tf) const noexcept {
+    std::vector<size_t> blocks(tf - t0);
+    std::iota(blocks.begin(), blocks.end(), t0);
+    return blocks;
+}
+
+std::vector<size_t> ModelBase::getBlocks(size_t t0, size_t tf, const std::shared_ptr<const AbstractSource>& q, Station& s) const noexcept {
+    std::vector<size_t> blocks = ModelBase::getBlocks(t0, tf);
+    std::vector<size_t> blocksMasked;
+    std::copy_if(blocks.begin(), blocks.end(), std::back_inserter(blocksMasked), 
+        [this, q, &s](size_t obj) { return this->checkStationVisibility(obj, q, s); });
+    return blocksMasked;
+}
+
+std::vector<size_t> ModelBase::getBlocks(size_t t0, size_t tf, const std::shared_ptr<const AbstractSource>& q, const Baseline& b) noexcept {
+    std::vector<size_t> blocks = ModelBase::getBlocks(t0, tf);
+    std::vector<size_t> blocksMasked;
+    std::copy_if(blocks.begin(), blocks.end(), std::back_inserter(blocksMasked), 
+        [this, q, &b](size_t obj) { 
+            Station& s1 = this->network_.refStation(b.getStaid1());
+            Station& s2 = this->network_.refStation(b.getStaid2());
+            return this->checkStationVisibility(obj, q, s1) && this->checkStationVisibility(obj, q, s2); 
+        });
+    return blocksMasked;
+}
+
+std::vector<std::reference_wrapper<Station>> ModelBase::getStations() noexcept {
+    std::vector<Station>& stations = network_.refStations();
+    std::vector<std::reference_wrapper<Station>> refs;
+    refs.reserve(stations.size());
+    std::transform(stations.begin(), stations.end(), std::back_inserter(refs), 
+        [](Station& obj) { return std::ref(obj); });
+    return refs;
+}
+
+std::vector<std::reference_wrapper<Station>> ModelBase::getStations(size_t t, const std::shared_ptr<const AbstractSource>& q) noexcept {
+    std::vector<std::reference_wrapper<Station>> refs = ModelBase::getStations();
+    std::vector<std::reference_wrapper<Station>> refsMasked;
+    std::copy_if(refs.begin(), refs.end(), std::back_inserter(refsMasked), 
+        [this, t, q](Station& obj) { return this->checkStationVisibility(t, q, obj); });
+    return refsMasked;
+}
+
+std::vector<std::reference_wrapper<const Baseline>> ModelBase::getBaselines() const noexcept {
+    const std::vector<Baseline>& baselines = network_.getBaselines();
+    std::vector<std::reference_wrapper<const Baseline>> refs;
+    refs.reserve(baselines.size());
+    std::transform(baselines.begin(), baselines.end(), std::back_inserter(refs), 
+        [](const Baseline& obj) { return std::cref(obj); });
+    return refs;
+}
+
+std::vector<std::reference_wrapper<const Baseline>> ModelBase::getBaselines(size_t t, const std::shared_ptr<const AbstractSource>& q) noexcept {
+    std::vector<std::reference_wrapper<const Baseline>> refs = ModelBase::getBaselines();
+    std::vector<std::reference_wrapper<const Baseline>> refsMasked;
+    std::copy_if(refs.begin(), refs.end(), std::back_inserter(refsMasked), 
+        [this, t, q](const Baseline& obj) { 
+            Station& s1 = this->network_.refStation(obj.getStaid1());
+            Station& s2 = this->network_.refStation(obj.getStaid2());
+            return this->checkStationVisibility(t, q, s1) && this->checkStationVisibility(t, q, s2); 
+        });
+    return refsMasked;
+}
+
+std::vector<std::shared_ptr<const AbstractSource>> ModelBase::getSources() const noexcept {
+    std::vector<std::shared_ptr<const AbstractSource>> sources = sourceList_.getSources();
+    std::vector<std::shared_ptr<const AbstractSource>> sourcesMasked;
+    std::copy_if(sources.begin(), sources.end(), std::back_inserter(sourcesMasked), 
+        [this](const std::shared_ptr<const AbstractSource>& obj) { 
+            return this->sourceMask_.count(obj->getId()) > 0; 
+        });
+    return sourcesMasked;
+}
+
+std::vector<std::shared_ptr<const AbstractSource>> ModelBase::getSources(size_t t, Station& s) const noexcept {
+    std::vector<std::shared_ptr<const AbstractSource>> refs = ModelBase::getSources();
+    std::vector<std::shared_ptr<const AbstractSource>> refsMasked;
+    std::copy_if(refs.begin(), refs.end(), std::back_inserter(refsMasked), 
+        [this, t, &s](const std::shared_ptr<const AbstractSource>& obj) { 
+            return this->checkStationVisibility(t, obj, s);
+        });
+    return refsMasked;
+}
+
+std::vector<std::shared_ptr<const AbstractSource>> ModelBase::getSources(size_t t, const Baseline& b) noexcept {
+    std::vector<std::shared_ptr<const AbstractSource>> refs = ModelBase::getSources();
+    std::vector<std::shared_ptr<const AbstractSource>> refsMasked;
+    std::copy_if(refs.begin(), refs.end(), std::back_inserter(refsMasked), 
+        [this, t, &b](const std::shared_ptr<const AbstractSource>& obj) { 
+            Station& s1 = this->network_.refStation(b.getStaid1());
+            Station& s2 = this->network_.refStation(b.getStaid2());
+            return this->checkStationVisibility(t, obj, s1) && this->checkStationVisibility(t, obj, s2); 
+        });
+    return refsMasked;
 }
 
 #ifdef WITH_GUROBI
@@ -629,6 +686,7 @@ void ModelBase::loadScans(const std::vector<Scan>& scans) {
     // populate starting values from given scans
     for(const Scan& scan : scans) {
         std::shared_ptr<const VieVS::AbstractSource> const q = sourceList_.getSource(scan.getSourceId());
+        if(sourceMask_.count(q->getId()) == 0) continue;
         const ScanTimes& scanTimes = scan.getTimes();
         
         // populate BlnActive variables
@@ -663,7 +721,7 @@ void ModelBase::loadScans(const std::vector<Scan>& scans) {
                 }
                 bool s1_available = true;
                 bool s2_available = true;
-                for(const auto q2 : sourceList_.getSources()) {
+                for(const auto q2 : ModelBase::getSources()) {
                     if(q->getId() == q2->getId()) continue;
                     if(auto sol1 = getSol(ModelKey::StaActive(this, q2, s1, t))) {
                         if(*sol1) s1_available = false;
@@ -684,27 +742,26 @@ void ModelBase::loadScans(const std::vector<Scan>& scans) {
                 }
             }
             if(t_delayed > 0 || t_premature > 0) {
+                // TODO: proper logging
                 std::cout << "t_delayed: " << t_delayed * blockLength_ << "s, t_premature: " << t_premature * blockLength_ << std::endl;
             }
         }
     }
 
     // disable observations that don't respect the minNumberOfSites parameter due to discretization
-    for(const auto q : sourceList_.getSources()) {
-        if(sourceMask_.count(q->getId()) == 0) continue;
+    for(const auto q : ModelBase::getSources()) {
         unsigned int minNumberOfSites = q->getPARA().minNumberOfSites;
-        for(size_t t = 0; t < blockCount_; ++t) {
+        for(size_t t : ModelBase::getBlocks(0, blockCount_)) {
             size_t active = 0;
-            for(const Station& s : network_.getStations()) {
-                if(auto sol = getSol(ModelKey::StaActive(this, q, s, t))) {
-                    if(*sol) ++active;
-                }
+            for(const Station& s : ModelBase::getStations(t, q)) {
+                if(*getSol(ModelKey::StaActive(this, q, s, t))) ++active;
             }
             if(active < minNumberOfSites) {
-                for(const Station& s : network_.getStations()) {
-                    if(auto sol = getSol(ModelKey::StaActive(this, q, s, t))) {
-                        *sol = false;
-                    }
+                for(const Station& s : ModelBase::getStations(t, q)) {
+                    *getSol(ModelKey::StaActive(this, q, s, t)) = false;
+                }
+                for(const Baseline& b : ModelBase::getBaselines(t, q)) {
+                    *getSol(ModelKey::BlnActive(this, q, b, t)) = false;
                 }
             }
         } 

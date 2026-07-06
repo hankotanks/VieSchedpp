@@ -44,10 +44,10 @@
 #include "Misc/HighImpactScanDescriptor.h"
 #include "ObservingMode/Mode.h"
 #include "Output/Output.h"
-#include "Scheduler.h"
+#include "Scheduler/Scheduler.h"
+#include "Scheduler/SchedulerILP.h"
 #include "XML/ParameterSettings.h"
-#include "Scheduler.h"
-#include "SchedulerILP.h"
+
 #ifdef VIESCHEDPP_LOG
 #include <boost/log/attributes/named_scope.hpp>
 #include <boost/log/core.hpp>

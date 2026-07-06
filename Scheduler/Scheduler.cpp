@@ -24,7 +24,7 @@
  */
 
 #include "Scheduler.h"
-#include "Misc/VieVS_NamedObject.h"
+#include "../Misc/VieVS_NamedObject.h"
 
 
 using namespace std;
