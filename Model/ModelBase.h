@@ -131,7 +131,7 @@ public:
      */
     std::vector<Scan> optimize(std::vector<Scan>& scans);
 protected:
-    virtual void prepare(size_t t0, size_t tf) = 0;
+    virtual void prepare(size_t tp, size_t t0, size_t tf, size_t tn) = 0;
 protected:
     bool checkStationVisibility(size_t t, 
         std::shared_ptr<const VieVS::AbstractSource> q, 
@@ -229,24 +229,21 @@ protected:
     bool& addSol(const ModelKey& key);
 protected:
     template<typename F>
-    void apply(F op) {
-        ModelBase::applyBetween(0, blockCount_, op);
-    }
-
-    template<typename F>
-    void applyBetween(size_t t0, size_t tf, F op) {
-        for(size_t t = t0; t < tf; ++t) {
-            for(const auto q : sourceList_.getSources()) {
-                for(Station& s : network_.refStations()) {
-                    if(auto var = getVar(ModelKey::StaActive(this, q, s, t))) op(*var);
+    void apply(size_t t0, size_t tf, F op) {
+        for(size_t t : ModelBase::getBlocks(t0, tf)) {
+            for(const auto q : ModelBase::getSources()) {
+                for(Station& s : ModelBase::getStations(t, q)) {
+                    auto var = *getVar(ModelKey::StaActive(this, q, s, t));
+                    op(var);
                 }
             }
         }
 
-        for(size_t t = t0; t < tf; ++t) {
-            for(const auto q : sourceList_.getSources()) {
-                for(const Baseline& b : network_.getBaselines()) {
-                    if(auto var = getVar(ModelKey::BlnActive(this, q, b, t))) op(*var);
+        for(size_t t : ModelBase::getBlocks(t0, tf)) {
+            for(const auto q : ModelBase::getSources()) {
+                for(const Baseline& b : ModelBase::getBaselines(t, q)) {
+                    auto var = *getVar(ModelKey::BlnActive(this, q, b, t));
+                    op(var);
                 }
             }
         }

@@ -88,18 +88,21 @@ public:
     */
     ~Model() = default;
 protected:
-    virtual void prepare(size_t t0, size_t tf) override;
+    virtual void prepare(size_t tp, size_t t0, size_t tf, size_t tn) override;
 private:
 #ifdef WITH_GUROBI
     void constrExclusive(size_t t0, size_t tf);
     void constrBaseline(size_t t0, size_t tf);
     void constrPairwise(size_t t0, size_t tf);
-    void constrDuration(size_t t0, size_t tf);
-    void constrSNR(size_t t0, size_t tf);
-    void constrSlew(size_t t0, size_t tf);
+    void constrDuration(size_t tp, size_t t0, size_t tf, size_t tn);
+    void constrSNR(size_t tp, size_t t0, size_t tf, size_t tn);
+    void constrSlew(size_t tp, size_t t0, size_t tf, size_t tn);
     void constrCoverage(size_t t0, size_t tf);
+private:
     GRBLinExpr objSkyCov();
     GRBLinExpr objBaselines(size_t t0, size_t tf);
+private:
+    std::set<ModelKey> fixed_;
 #endif // WITH_GUROBI
 };
 }

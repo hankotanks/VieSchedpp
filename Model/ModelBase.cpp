@@ -84,7 +84,7 @@ ModelBase::ModelBase(VieVS::Network& network, VieVS::SourceList& sourceList,
     windowLength_(windowLength), 
     windowBlockCount_((windowLength + blockLength - 1) / blockLength),
     // TODO: This may need a +1
-    windowCount_(((TimeSystem::duration / blockLength) - 3) / ((windowLength + blockLength - 1) / blockLength - 2) + 1) {
+    windowCount_(TimeSystem::duration / windowLength) {
     coverage_ = std::make_unique<ModelCoverage13>();
 #ifdef WITH_GUROBI
     initGurobi(env_);
@@ -141,8 +141,10 @@ ModelBase::ModelBase(VieVS::Network& network, VieVS::SourceList& sourceList,
 bool ModelBase::optimize(void) {
 #ifdef WITH_GUROBI
     for (size_t i = 0; i < windowCount_; ++i) {
-        size_t t0 = i * (windowBlockCount_ - 2);
+        size_t t0 = i * windowBlockCount_;
+        size_t tp = (i == 0) ? 0 : (t0 - windowBlockCount_);
         size_t tf = std::min(t0 + windowBlockCount_, blockCount_);
+        size_t tn = std::min(tf + windowBlockCount_, blockCount_);
 
         // reinitialize the model
         initModel(env_, model_);
@@ -151,14 +153,19 @@ bool ModelBase::optimize(void) {
         var_.clear();
 
 #ifdef VIESCHEDPP_LOG
+        BOOST_LOG_TRIVIAL( info ) << "Complete window spans " << tp * blockLength_ << " to " << tn * blockLength_;
+#else
+        std::cout << "[info] Optimizing window spans " << tp * blockLength_ << " to " << tn * blockLength_;
+#endif
+
+#ifdef VIESCHEDPP_LOG
         BOOST_LOG_TRIVIAL( info ) << "Optimizing between " << t0 * blockLength_ << " and " << tf * blockLength_;
 #else
         std::cout << "[info] Optimizing between " << t0 * blockLength_ << " and " << tf * blockLength_;
 #endif
-
         // StaActive
         size_t count = 0;
-        for(size_t t : ModelBase::getBlocks(t0, tf)) {
+        for(size_t t : ModelBase::getBlocks(tp, tn)) {
             for(const auto q : ModelBase::getSources()) {
                 for(Station& s : ModelBase::getStations(t, q)) {
                     // create variable
@@ -181,7 +188,7 @@ bool ModelBase::optimize(void) {
 
         // BlnActive
         count = 0;
-        for(size_t t : ModelBase::getBlocks(t0, tf)) {
+        for(size_t t : ModelBase::getBlocks(tp, tn)) {
             for(const auto q : ModelBase::getSources()) {
                 for(const Baseline& b : ModelBase::getBaselines(t, q)) {
                     ModelBase::ModelKey key = ModelKey::BlnActive(this, q, b, t);
@@ -219,12 +226,11 @@ bool ModelBase::optimize(void) {
                         if(*getSol(ModelKey::StaActive(this, q, s, t))) {
                             auto var = *getVar(ModelKey::StaCoverage(this, s, c));
                             var.set(GRB_DoubleAttr_Start, 1.0);
-                            goto next_c;
+                            goto next;
                         }
                     }
                 }
-next_c:
-                (void) nullptr;
+next:;
             }
         }
 
@@ -236,9 +242,24 @@ next_c:
 
         // update the model to make sure variables are accessible
         model_->update();
+
+        // freeze the previous optimization window...
+        ModelBase::apply(tp, t0, [](GRBVar& var) {
+            double val = var.get(GRB_DoubleAttr_Start);
+            var.set(GRB_DoubleAttr_LB, val);
+            var.set(GRB_DoubleAttr_UB, val);
+        });
+
+        // ... and the next optimization window
+        ModelBase::apply(tf, tn, [](GRBVar& var) {
+            double val = var.get(GRB_DoubleAttr_Start);
+            var.set(GRB_DoubleAttr_LB, val);
+            var.set(GRB_DoubleAttr_UB, val);
+        });
+        
         
         // optimize the window
-        this->prepare(t0, tf);
+        this->prepare(tp, t0, tf, tn);
 
         // optimize
         model_->optimize();
@@ -266,7 +287,7 @@ next_c:
     #endif
 
         // copy results back into solution
-        for(size_t t = t0; t < tf; ++t) {
+        for(size_t t : ModelBase::getBlocks(t0, tf)) {
             for(const auto q : ModelBase::getSources()) {
                 for(Station& s : ModelBase::getStations(t, q)) {
                     ModelBase::ModelKey key = ModelKey::StaActive(this, q, s, t);
@@ -494,6 +515,9 @@ size_t ModelBase::calculateSlewTime(Station& s,
 }
 
 std::vector<size_t> ModelBase::getBlocks(size_t t0, size_t tf) const noexcept {
+    tf = std::min(tf, blockCount_);
+    assert(t0 <= tf);
+    if(t0 == tf) return {};
     std::vector<size_t> blocks(tf - t0);
     std::iota(blocks.begin(), blocks.end(), t0);
     return blocks;
@@ -742,8 +766,11 @@ void ModelBase::loadScans(const std::vector<Scan>& scans) {
                 }
             }
             if(t_delayed > 0 || t_premature > 0) {
-                // TODO: proper logging
-                std::cout << "t_delayed: " << t_delayed * blockLength_ << "s, t_premature: " << t_premature * blockLength_ << std::endl;
+#ifdef VIESCHEDPP_LOG
+                BOOST_LOG_TRIVIAL( warning ) << "Observation from greedy solution truncated during discretization [delayed: " << t_delayed * blockLength_ << "s, premature: " << t_premature * blockLength_ << "s]";
+#else
+                std::cout << "[warning] Observation from greedy solution truncated during discretization [delayed: " << t_delayed * blockLength_ << "s, premature: " << t_premature * blockLength_ << "s]";
+#endif
             }
         }
     }
@@ -1055,13 +1082,12 @@ std::string ModelBase::dump() const noexcept {
                 if(auto sol = getSol(ModelKey::StaActive(this, q, s, t))) {
                     if(*sol) {
                         output << qId.at(q->getId());
-                        goto next_t;
+                        goto next;
                     }
                 }
             }
             output << " ";
-next_t:
-            (void) nullptr;
+next:;
         }
         output << std::endl;
     }
