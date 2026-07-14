@@ -26,8 +26,6 @@
 #include "gurobi_c++.h"
 #endif // WITH_GUROBI
 
-#define UNREACHABLE std::logic_error((boost::format("unreachable: %d") % __LINE__).str())
-
 namespace VieVS {
 void Model::prepare(size_t tp, size_t t0, size_t tf, size_t tn) {
     Model::constrPairwise(t0, tf);
@@ -41,7 +39,7 @@ void Model::prepare(size_t tp, size_t t0, size_t tf, size_t tn) {
     Model::constExclusive(t0, tf);
 #endif
 
-#if 0
+#if 1
     // TODO: unfinished
     Model::constrSNR(tp, t0, tf, tn);
 #endif
@@ -52,7 +50,7 @@ void Model::prepare(size_t tp, size_t t0, size_t tf, size_t tn) {
     model_->getMultiobjEnv(0).set(GRB_DoubleParam_TimeLimit, 600.0);
 
     model_->setObjectiveN(Model::objBaselines(t0, tf), 1, 1);
-    model_->getMultiobjEnv(1).set(GRB_DoubleParam_TimeLimit, 30.0);
+    model_->getMultiobjEnv(1).set(GRB_DoubleParam_TimeLimit, 150.0);
 
 #ifdef VIESCHEDPP_LOG
         BOOST_LOG_TRIVIAL( info ) << "Finished building ILP model";
@@ -74,7 +72,7 @@ void Model::constrExclusive(size_t t0, size_t tf) {
                 lhsCount++;
             }
             if(lhsCount > 0) {
-                model_->addConstr(lhs <= 1, "c0_exclusive");
+                model_->addConstr(lhs <= 1, "constr_exclusive[" + s.getName() + ", " + std::to_string(t) + "]");
                 count++;
             }
         }
@@ -98,9 +96,9 @@ void Model::constrBaseline(size_t t0, size_t tf) {
                 GRBVar lhs, rhs;
                 lhs = *getVar(ModelKey::BlnActive(this, q, b, t));
                 rhs = *getVar(ModelKey::StaActive(this, q, s1, t));
-                model_->addConstr(lhs <= rhs, "c2_baseline");
+                model_->addConstr(lhs <= rhs, "constr_baseline[<" + s1.getName() + ", " + s2.getName() + ">, " + q->getName() + ", " + std::to_string(t) + "]");
                 rhs = *getVar(ModelKey::StaActive(this, q, s2, t));
-                model_->addConstr(lhs <= rhs, "c2_baseline");
+                model_->addConstr(lhs <= rhs, "constr_baseline[<" + s2.getName() + ", " + s1.getName() + ">, " + q->getName() + ", " + std::to_string(t) + "]");
                 count += 2;
             }
         }
@@ -129,7 +127,7 @@ void Model::constrPairwise(size_t t0, size_t tf) {
                     rhsCount++;
                 }
                 if(rhsCount > 0) {
-                    model_->addConstr(rhs >= std::max(static_cast<unsigned int>(2), q->getPARA().minNumberOfSites - 1) * lhs, "c1_pairwise");
+                    model_->addConstr(rhs >= std::max(static_cast<unsigned int>(2), q->getPARA().minNumberOfSites - 1) * lhs, "constr_pairwise[" + s1.getName() + ", " + q->getName() + ", " + std::to_string(t) + "]");
                     count++;
                 }
             }
@@ -164,7 +162,7 @@ void Model::constrDuration(size_t tp, size_t t0, size_t tf, size_t tn) {
                         lhs += *var;
                     }
                 }
-                model_->addConstr(lhs <= maxScan - 1, "c6_max_scan");
+                model_->addConstr(lhs <= maxScan - 1, "constr_duration[" + s.getName() + ", " + q->getName() + " , " + std::to_string(t2) + "]");
                 ++count;
             }
         }
@@ -177,33 +175,57 @@ void Model::constrDuration(size_t tp, size_t t0, size_t tf, size_t tn) {
 #endif
 }
 
-// TODO: rewrite
 void Model::constrSNR(size_t tp, size_t t0, size_t tf, size_t tn) {
-    // loop over all Modes in the configuration
-    // for each pair of baselines at each timestep wrt to each source
-    // calculate the required observation time for each mode in the configuration
-    // we require at least one mode to be feasible for this baseline in order for either to be active
     size_t count = 0;
-    for(size_t t1 : ModelBase::getBlocks(t0, tf)) {
-        for(const auto q : ModelBase::getSources()) {
-            for(const Baseline& b : ModelBase::getBaselines()) {
+    for(const auto q : ModelBase::getSources()) {
+        for(const Baseline& b : ModelBase::getBaselines()) {
+            for(size_t t1 : ModelBase::getBlocks(t0, tf, q, b)) {
                 GRBVar lhs = *getVar(ModelKey::BlnActive(this, q, b, t1));
-                GRBLinExpr rhs;
-                size_t t_obs = std::numeric_limits<size_t>::max();
+                size_t dur = std::numeric_limits<size_t>::max();
                 for(auto& mode : modes_->getModes()) {
-                    t_obs = std::min(t_obs, Model::calculateMinObs(t1, q, b, mode));
+                    dur = std::min(dur, Model::calculateMinObs(t1, q, b, mode));
                 }
-                for(size_t t2 : ModelBase::getBlocks(t1 + 1, std::min(t1 + t_obs, tf), q, b)) {
+                // we want to get the # of blocks before and after to extend it, clipped to the complete schedule bounds
+                // if the duration would extend before the beginning of the entire schedule
+                size_t dur_prior = 0;
+                size_t dur_after = 0;
+                if(dur > 0) {
+                    dur_prior = std::min(dur - 1, t1);
+                    if(t1 >= blockCount_) {
+                        dur_after = 0;
+                    } else if (dur > blockCount_ - t1) {
+                        dur_after = blockCount_ - t1;
+                    } else {
+                        dur_after = dur;
+                    }
+                }
+                // next, compute all active baselines outside the observation window
+                size_t active_prior = 0;
+                for(size_t t2 : ModelBase::getBlocks(t1 - dur_prior, t0, q, b)) {
+                    if(*getSol(ModelKey::BlnActive(this, q, b, t2))) {
+                        active_prior++;
+                    }
+                }
+                size_t active_after = 0;
+                for(size_t t2 : ModelBase::getBlocks(tf, t1 + dur_after, q, b)) {
+                    if(*getSol(ModelKey::BlnActive(this, q, b, t2))) {
+                        active_after++;
+                    }
+                }
+                // finally, build the linexpr
+                GRBLinExpr rhs;
+                for(size_t t2 : ModelBase::getBlocks(t1 - dur_prior, t1 + dur_after, q, b)) {
                     rhs += *getVar(ModelKey::BlnActive(this, q, b, t2));
                 }
                 if(rhs.size() > 0) {
-                    model_->addGenConstrIndicator(lhs, 1, rhs >= (t_obs - 1), "c1000_snr");
+                    auto s1 = network_.getStation(b.getStaid1());
+                    auto s2 = network_.getStation(b.getStaid2());
+                    model_->addConstr(rhs + active_prior + active_after >= lhs * dur, "constr_snr[<" + s1.getName() + ", " + s2.getName() + ">, " + q->getName() + " , " + std::to_string(t1) + ", " + std::to_string(dur) + "]");
                     count++;
                 }
             }
         }
     }
-
 #ifdef VIESCHEDPP_LOG
     BOOST_LOG_TRIVIAL( info ) << "Added " << count << " SNR constraints to model";
 #else
@@ -222,12 +244,12 @@ void Model::constrSlew(size_t tp, size_t t0, size_t tf, size_t tn) {
                 for(const auto q2 : ModelBase::getSources()) {
                     if(q1->getId() == q2->getId()) continue;
                     for(size_t t2 : ModelBase::getBlocks(t0, t1 + 1, q2, s)) {
-                        size_t t_slew = Model::calculateSlewTime(s, q1, q2, t1, t2);
+                        size_t t_slew = Model::calculateSlewTime(s, q2, q1, t2, t1);
                         if(t1 - t2 > t_slew) continue;
                         rhs += *getVar(ModelKey::StaActive(this, q2, s, t2));
                     }
                 }
-                model_->addGenConstrIndicator(lhs, 1, rhs == 0, "c3_slew");
+                model_->addGenConstrIndicator(lhs, 1, rhs == 0, "constr_slew[" + s.getName() + ", " + q1->getName() + " , " + std::to_string(t1) + "]");
                 count++;
             }
         }
@@ -256,18 +278,18 @@ void Model::constrSlew(size_t tp, size_t t0, size_t tf, size_t tn) {
                                     var.set(GRB_DoubleAttr_UB, 0.0);
                                     ++count;
                                 }
-                                goto next_forward;
+                                goto next_backward;
                             }
                         }
                     }
-next_forward:;
+next_backward:;
                 }
             }
         }
 #ifdef VIESCHEDPP_LOG
-        BOOST_LOG_TRIVIAL( info ) << "Forbade " << count << " potential observations due to forward slew violations";
+        BOOST_LOG_TRIVIAL( info ) << "Forbade " << count << " potential observations due to backward slew violations";
 #else
-        std::cout << "[info] Forbade " << count << " potential observations due to forward slew violations";
+        std::cout << "[info] Forbade " << count << " potential observations due to backward slew violations";
 #endif
     }
     
@@ -290,18 +312,18 @@ next_forward:;
                                     var.set(GRB_DoubleAttr_UB, 0.0);
                                     count++;
                                 }
-                                goto next_backward;
+                                goto next_forward;
                             }
                         }
                     }
-next_backward:;
+next_forward:;
                 }
             }
         }
 #ifdef VIESCHEDPP_LOG
-        BOOST_LOG_TRIVIAL( info ) << "Forbade " << count << " potential observations due to backward slew violations";
+        BOOST_LOG_TRIVIAL( info ) << "Forbade " << count << " potential observations due to forward slew violations";
 #else
-        std::cout << "[info] Forbade " << count << " potential observations due to backward slew violations";
+        std::cout << "[info] Forbade " << count << " potential observations due to forward slew violations";
 #endif
     }
 }
@@ -322,7 +344,7 @@ void Model::constrCoverage(size_t t0, size_t tf) {
                 }
             }
             if(rhsCount > 0) {
-                model_->addConstr(lhs <= rhs, "c4_coverage");
+                model_->addConstr(lhs <= rhs, "constr_coverage[" + s.getName() + ", " + std::to_string(c) + "]");
                 count++;
             }
         }

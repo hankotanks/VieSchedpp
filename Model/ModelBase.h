@@ -137,6 +137,10 @@ protected:
         std::shared_ptr<const VieVS::AbstractSource> q, 
         Station& s) const noexcept;
 
+    bool checkBaselineViability(size_t t, 
+        std::shared_ptr<const VieVS::AbstractSource> q, 
+        const Baseline& b) noexcept;
+
     unsigned int calculateMinObsExact(unsigned int t,
         const std::shared_ptr<const AbstractSource>& q,
         const Baseline& b,
@@ -207,6 +211,36 @@ protected:
         std::string name;
 
         bool operator<(const ModelKey& other) const;
+        bool operator==(const ModelKey& other) const noexcept;
+
+        struct Hash {
+            size_t operator()(const ModelKey& k) const noexcept {
+                size_t h = std::hash<int>{}(static_cast<int>(k.type));
+                auto combine = [&](size_t v) {
+                    h ^= std::hash<size_t>{}(v)
+                    + 0x9e3779b97f4a7c15ULL
+                    + (h << 6)
+                    + (h >> 2);
+                };
+                switch(k.type) {
+                case ModelKey::sta_active:
+                    combine(k.key.sta_active.q);
+                    combine(k.key.sta_active.s);
+                    combine(k.key.sta_active.t);
+                    break;
+                case ModelKey::bln_active:
+                    combine(k.key.bln_active.q);
+                    combine(k.key.bln_active.b);
+                    combine(k.key.bln_active.t);
+                    break;
+                case ModelKey::sta_coverage:
+                    combine(k.key.sta_coverage.s);
+                    combine(k.key.sta_coverage.c);
+                    break;
+                }
+                return h;
+            }
+        };
 
         static ModelKey StaActive(const ModelBase* model, 
             std::shared_ptr<const VieVS::AbstractSource> const q, 
@@ -294,6 +328,7 @@ private:
     std::map<ModelKey, GRBVar> var_;
     std::map<ModelKey, bool> sol_;
     std::map<ModelKey, bool> cov_;
+    std::unordered_map<ModelKey, std::map<unsigned long, size_t>, ModelKey::Hash> snr_;
     std::map<unsigned long, size_t> sta2idx_;
     std::map<unsigned long, size_t> bln2idx_;
     std::map<unsigned long, size_t> src2idx_;
