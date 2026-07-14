@@ -191,12 +191,10 @@ void Model::constrSNR(size_t tp, size_t t0, size_t tf, size_t tn) {
                 size_t dur_after = 0;
                 if(dur > 0) {
                     dur_prior = std::min(dur - 1, t1);
-                    if(t1 >= blockCount_) {
+                    if(t1 + 1 >= blockCount_) {
                         dur_after = 0;
-                    } else if (dur > blockCount_ - t1) {
-                        dur_after = blockCount_ - t1;
                     } else {
-                        dur_after = dur;
+                        dur_after = std::min(dur - 1, blockCount_ - t1 - 1);
                     }
                 }
                 // next, compute all active baselines outside the observation window
@@ -214,7 +212,7 @@ void Model::constrSNR(size_t tp, size_t t0, size_t tf, size_t tn) {
                 }
                 // finally, build the linexpr
                 GRBLinExpr rhs;
-                for(size_t t2 : ModelBase::getBlocks(t1 - dur_prior, t1 + dur_after, q, b)) {
+                for(size_t t2 : ModelBase::getBlocks(std::max(t0, t1 - dur_prior), std::min(tf, t1 + dur_after), q, b)) {
                     rhs += *getVar(ModelKey::BlnActive(this, q, b, t2));
                 }
                 if(rhs.size() > 0) {

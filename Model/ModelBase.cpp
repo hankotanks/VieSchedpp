@@ -503,7 +503,7 @@ size_t ModelBase::calculateMinObs(size_t t,
     const auto modeId = mode->getId();
     std::map<unsigned long, size_t>::const_iterator it = cache.find(modeId);
     if(it != cache.end()) return it->second;
-    size_t maxDuration = (ModelBase::calculateMinObsExact(t * blockLength_, q, b, mode) + blockLength_ - 1) / blockLength_;
+    size_t maxDuration = (ModelBase::calculateMinObsExact(t * blockLength_, q, b, mode) + blockLength_ - 1) / blockLength_ - 1;
     if(maxDuration > blockCount_) maxDuration = std::numeric_limits<size_t>::max();
     cache.emplace(modeId, maxDuration);
     return maxDuration;
@@ -835,12 +835,21 @@ void ModelBase::loadScans(const std::vector<Scan>& scans) {
 #else
             std::cout << "[warning] Checking validity [" << snr_.size() << "]";
 #endif
+            if(t_start >= t_end) continue;
 
-            size_t dur = std::numeric_limits<size_t>::max();
-            for(auto& mode : modes_->getModes()) {
-                dur = std::min(dur, ModelBase::calculateMinObs(t_start, q, b, mode));
+            bool viable = true;
+            for(size_t t = t_start; t < t_end; ++t) {
+                size_t dur = std::numeric_limits<size_t>::max();
+                for(auto& mode : modes_->getModes()) {
+                    dur = std::min(dur, ModelBase::calculateMinObs(t_start, q, b, mode));
+                }
+                if(t_end - t_start < dur) {
+                    viable = false;
+                    break;
+                }
             }
-            if(t_start < t_end && t_end - t_start >= dur) {
+            
+            if(viable) {
                 obsValid.emplace(&obs, t_start, t_end);
             }
         }
@@ -923,81 +932,6 @@ void ModelBase::loadScans(const std::vector<Scan>& scans) {
         BOOST_LOG_TRIVIAL( warning ) << "Finished adding observations!";
 #else
         std::cout << "[warning] Finished adding observations!";
-#endif
-
-#if 0
-    // disable observations that don't respect the minNumberOfSites parameter due to discretization
-    for(const auto q : ModelBase::getSources()) {
-        unsigned int minNumberOfSites = q->getPARA().minNumberOfSites;
-        for(size_t t : ModelBase::getBlocks(0, blockCount_)) {
-            size_t active = 0;
-            for(const Station& s : ModelBase::getStations(t, q)) {
-                if(*getSol(ModelKey::StaActive(this, q, s, t))) ++active;
-            }
-            if(active < minNumberOfSites) {
-                // we need to remove the entire scan in case the SNR constraint is violated
-                for(const Baseline& b : ModelBase::getBaselines(t, q)) {
-                    for(size_t t_prev : ModelBase::getBlocks(0, t)) {
-                        bool* sol = getSol(ModelKey::BlnActive(this, q, b, t_prev));
-                        if(sol == nullptr || !*sol) break;
-                        *sol = false;
-                        auto s1 = network_.getStation(b.getStaid1());
-                        auto s2 = network_.getStation(b.getStaid2());
-                        *getSol(ModelKey::StaActive(this, q, s1, t_prev)) = false;
-                        *getSol(ModelKey::StaActive(this, q, s2, t_prev)) = false;
-                    }
-                    for(size_t t_next : ModelBase::getBlocks(t, blockCount_)) {
-                        bool* sol = getSol(ModelKey::BlnActive(this, q, b, t_next));
-                        if(sol == nullptr || !*sol) break;
-                        *sol = false;
-                        auto s1 = network_.getStation(b.getStaid1());
-                        auto s2 = network_.getStation(b.getStaid2());
-                        *getSol(ModelKey::StaActive(this, q, s1, t_next)) = false;
-                        *getSol(ModelKey::StaActive(this, q, s2, t_next)) = false;
-                    }
-                }
-            }
-        } 
-    }
-#endif
-
-#if 0
-    // validate snr constraint (may have been screwed up due to discretization)
-    for(const Baseline& b : ModelBase::getBaselines()) {
-        size_t t_obs_start;
-        size_t t_obs_end;
-        std::shared_ptr<const VieVS::AbstractSource> q_obs = nullptr;
-        for(size_t t : ModelBase::getBlocks(0, blockCount_)) {
-            for(auto q : ModelBase::getSources(t, b)) {
-                if(*getSol(ModelKey::BlnActive(this, q, b, t))) {
-                    if(q == q_obs) {
-                        t_obs_end = t;
-                    } else {
-                        // start
-                        t_obs_start = t;
-                        t_obs_end = t;
-                    }
-                }
-            }
-            if(q_obs != nullptr && t_obs_end != t) {
-                // scan has ended, we have its full extent
-                for(size_t t_obs : ModelBase::getBlocks(t_obs_start, t_obs_end)) {
-                    size_t dur = std::numeric_limits<size_t>::max();
-                    for(auto& mode : modes_->getModes()) {
-                        dur = std::min(dur, ModelBase::calculateMinObs(t, q_obs, b, mode));
-                    }
-                    if(dur > t_obs_end - t_obs_start) {
-                        // not enough time
-                        std::cout << "we need to remove the observation of " 
-                            << q_obs->getName() << " by (" << network_.getStation(b.getStaid1()).getName() << ", " 
-                            << network_.getStation(b.getStaid2()).getName() << ") from " 
-                            << t_obs_start * blockLength_ << " to " << (t_obs_end + 1) * blockLength_ << std::endl; 
-                    }
-                }
-                q_obs = nullptr;
-            }
-        }
-    }
 #endif
 
 #ifdef VIESCHEDPP_LOG
