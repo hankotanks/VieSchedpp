@@ -837,6 +837,9 @@ void ModelBase::loadScans(const std::vector<Scan>& scans) {
 #endif
             if(t_start >= t_end) continue;
 
+            // size_t maxScan = (std::min(q->getPARA().maxScan, std::min(s1.getPARA().maxScan, s2.getPARA().maxScan)) + blockLength_ - 1) / blockLength_;
+            // if(t_end - t_start > maxScan) t_start++;
+
             bool viable = true;
             for(size_t t = t_start; t < t_end; ++t) {
                 size_t dur = std::numeric_limits<size_t>::max();
