@@ -223,7 +223,7 @@ bool ModelBase::optimize(void) {
         for(Station& s : ModelBase::getStations()) {
             for(size_t c = 0; c < coverage_->cellCount(); ++c) {
                 for(const auto q : ModelBase::getSources()) {
-                    for(size_t t : ModelBase::getBlocks(t0, tf, q, s)) {
+                    for(size_t t : ModelBase::getBlocks((tp + t0) / 2, (tf + tn) / 2, q, s)) {
                         if(coverage_->calculateCell(this, t, q, s) != c) continue;
                         if(*getSol(ModelKey::StaActive(this, q, s, t))) {
                             auto var = *getVar(ModelKey::StaCoverage(this, s, c));
@@ -1212,7 +1212,7 @@ std::string ModelBase::dump() const noexcept {
     std::ostringstream output;
     std::map<unsigned long, char> qId;
     for(const unsigned long q : sourceMask_) {
-        qId.insert(std::make_pair(q, static_cast<char>(qId.size() + 65)));
+        qId.insert(std::make_pair(q, static_cast<char>(qId.size() + '!')));
     }
     for(const Station& s : network_.getStations()) {
         output << s.getName() << std::endl;

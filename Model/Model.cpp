@@ -179,7 +179,7 @@ void Model::constrSNR(size_t tp, size_t t0, size_t tf, size_t tn) {
     size_t count = 0;
     for(const auto q : ModelBase::getSources()) {
         for(const Baseline& b : ModelBase::getBaselines()) {
-            for(size_t t1 : ModelBase::getBlocks(t0, tf, q, b)) {
+            for(size_t t1 : ModelBase::getBlocks(tp, tn, q, b)) {
                 GRBVar lhs = *getVar(ModelKey::BlnActive(this, q, b, t1));
                 size_t dur = std::numeric_limits<size_t>::max();
                 for(auto& mode : modes_->getModes()) {
@@ -197,6 +197,7 @@ void Model::constrSNR(size_t tp, size_t t0, size_t tf, size_t tn) {
                         dur_after = std::min(dur, blockCount_ - t1);
                     }
                 }
+                if(t1 - dur_prior >= tf || t1 + dur_after <= t0) continue;
                 // next, compute all active baselines outside the observation window
                 size_t active = 0;
                 GRBLinExpr rhs;
@@ -233,9 +234,9 @@ void Model::constrSlew(size_t tp, size_t t0, size_t tf, size_t tn) {
                 GRBLinExpr rhs;
                 for(const auto q2 : ModelBase::getSources()) {
                     if(q1->getId() == q2->getId()) continue;
-                    for(size_t t2 : ModelBase::getBlocks(tp, tn, q2, s)) {
-                        size_t t_slew = Model::calculateSlewTime(s, (t1 < t2) ? q1 : q2, (t1 < t2) ? q2 : q1, std::min(t1, t2), std::max(t1, t2));
-                        if((t1 >= t2) ? (t1 - t2) : (t2 - t1) > t_slew) continue;
+                    for(size_t t2 : ModelBase::getBlocks(t1, tf, q2, s)) {
+                        size_t t_slew = Model::calculateSlewTime(s, q1, q2, t1, t2);
+                        if(t1 + t_slew < t2) continue;
                         rhs += *getVar(ModelKey::StaActive(this, q2, s, t2));
                     }
                 }
@@ -263,7 +264,6 @@ void Model::constrSlew(size_t tp, size_t t0, size_t tf, size_t tn) {
                             if(t1 + t_slew >= t0) {
                                 for(size_t t2 : ModelBase::getBlocks(t0, t1 + t_slew + 1, q2, s)) { // ending
                                     auto var = *getVar(ModelKey::StaActive(this, q2, s, t2));
-                                    assert(var.get(GRB_DoubleAttr_Start) < 0.5);
                                     var.set(GRB_DoubleAttr_LB, 0.0);
                                     var.set(GRB_DoubleAttr_UB, 0.0);
                                     ++count;
@@ -293,11 +293,10 @@ next_backward:;
                         if(*getSol(ModelKey::StaActive(this, q1, s, t1))) {
                             // check if any slew windows extend into the active optimization window
                             size_t t_slew = Model::calculateSlewTime(s, q2, q1, tf, t1);
-                            if(t1 - t_slew + 1 < tf) {
+                            if(t1 - t_slew < tf) {
                                 // force these variables to 0
                                 for(size_t t2 : ModelBase::getBlocks(t1 - t_slew, tf, q2, s)) {
                                     auto var = *getVar(ModelKey::StaActive(this, q2, s, t2));
-                                    assert(var.get(GRB_DoubleAttr_Start) < 0.5);
                                     var.set(GRB_DoubleAttr_LB, 0.0);
                                     var.set(GRB_DoubleAttr_UB, 0.0);
                                     count++;
