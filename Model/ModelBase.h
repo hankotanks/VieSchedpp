@@ -322,7 +322,7 @@ private:
     void loadScans(const std::vector<Scan>& scans);
     std::vector<Scan> readScans(void) const noexcept;
 private:
-    std::string dump() const noexcept;
+    std::string dump(size_t t0, size_t tf) const noexcept;
 private:
     // the sky coverage model used for the objective function
     std::map<ModelKey, GRBVar> var_;
@@ -332,6 +332,7 @@ private:
     std::map<unsigned long, size_t> sta2idx_;
     std::map<unsigned long, size_t> bln2idx_;
     std::map<unsigned long, size_t> src2idx_;
+    std::vector<std::string> dumps_;
 protected:
     // gurobi environment
     std::unique_ptr<GRBEnv> env_{nullptr};

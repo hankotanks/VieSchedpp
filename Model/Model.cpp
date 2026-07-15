@@ -32,7 +32,7 @@ void Model::prepare(size_t tp, size_t t0, size_t tf, size_t tn) {
     Model::constrBaseline(t0, tf);
     Model::constrSlew(tp, t0, tf, tn);
     Model::constrDuration(tp, t0, tf, tn);
-    Model::constrCoverage(t0, tf);
+    Model::constrCoverage(tp, t0, tf, tn);
 
 #if 0
     // NOTE: should be included in Model::constrSlew now
@@ -47,10 +47,10 @@ void Model::prepare(size_t tp, size_t t0, size_t tf, size_t tn) {
     model_->set(GRB_IntAttr_ModelSense, GRB_MAXIMIZE);
 
     model_->setObjectiveN(Model::objSkyCov(), 0, 2);
-    model_->getMultiobjEnv(0).set(GRB_DoubleParam_TimeLimit, 600.0);
+    // model_->getMultiobjEnv(0).set(GRB_DoubleParam_TimeLimit, 600.0);
 
     model_->setObjectiveN(Model::objBaselines(t0, tf), 1, 1);
-    model_->getMultiobjEnv(1).set(GRB_DoubleParam_TimeLimit, 150.0);
+    model_->getMultiobjEnv(1).set(GRB_DoubleParam_TimeLimit, 600.0);
 
 #ifdef VIESCHEDPP_LOG
         BOOST_LOG_TRIVIAL( info ) << "Finished building ILP model";
@@ -317,7 +317,7 @@ next_forward:;
     }
 }
 
-void Model::constrCoverage(size_t t0, size_t tf) {
+void Model::constrCoverage(size_t tp, size_t t0, size_t tf, size_t tn) {
     // c is 'hit' if >= observations occurred over schedule duration
     size_t count = 0;
     for(Station& s : ModelBase::getStations()) {

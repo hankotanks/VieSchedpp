@@ -223,7 +223,7 @@ bool ModelBase::optimize(void) {
         for(Station& s : ModelBase::getStations()) {
             for(size_t c = 0; c < coverage_->cellCount(); ++c) {
                 for(const auto q : ModelBase::getSources()) {
-                    for(size_t t : ModelBase::getBlocks((tp + t0) / 2, (tf + tn) / 2, q, s)) {
+                    for(size_t t : ModelBase::getBlocks(t0, tf, q, s)) {
                         if(coverage_->calculateCell(this, t, q, s) != c) continue;
                         if(*getSol(ModelKey::StaActive(this, q, s, t))) {
                             auto var = *getVar(ModelKey::StaCoverage(this, s, c));
@@ -245,9 +245,10 @@ next:;
         // update the model to make sure variables are accessible
         model_->update();
 
-        std::string output_greedy = ModelBase::dump();
         if(i == 0) {
-            std::cout << output_greedy;
+            std::string dump = ModelBase::dump(0, blockCount_);
+            std::cout << dump;
+            dumps_.emplace_back(dump);
         }
 
         // freeze the previous optimization window...
@@ -311,9 +312,17 @@ next:;
             }
         }
 
-        std::cout << output_greedy;
-        std::cout << "===========================================" << std::endl;
-        std::cout << ModelBase::dump();
+        std::string dump = ModelBase::dump(t0, tf);
+        if(tf < tn) {
+            const auto& prev = dumps_.back();
+            std::cout << prev;
+            std::cout << dump;
+        }
+        dumps_.emplace_back(dump);
+    }
+
+    for(const auto& dump : dumps_) {
+        std::cout << dump;
     }
     
     return true;
@@ -1208,12 +1217,13 @@ std::vector<Scan> ModelBase::readScans(void) const noexcept {
     return scans;
 }
 
-std::string ModelBase::dump() const noexcept {
+std::string ModelBase::dump(size_t t0, size_t tf) const noexcept {
     std::ostringstream output;
     std::map<unsigned long, char> qId;
     for(const unsigned long q : sourceMask_) {
         qId.insert(std::make_pair(q, static_cast<char>(qId.size() + '!')));
     }
+    output << "[" << t0 << ", " << tf << "]" << std::endl;
     for(const Station& s : network_.getStations()) {
         output << s.getName() << std::endl;
         for(size_t t = 0; t < blockCount_; ++t) {

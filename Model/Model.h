@@ -97,7 +97,7 @@ private:
     void constrDuration(size_t tp, size_t t0, size_t tf, size_t tn);
     void constrSNR(size_t tp, size_t t0, size_t tf, size_t tn);
     void constrSlew(size_t tp, size_t t0, size_t tf, size_t tn);
-    void constrCoverage(size_t t0, size_t tf);
+    void constrCoverage(size_t tp, size_t t0, size_t tf, size_t tn);
 private:
     GRBLinExpr objSkyCov();
     GRBLinExpr objBaselines(size_t t0, size_t tf);
