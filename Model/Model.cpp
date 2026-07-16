@@ -47,10 +47,10 @@ void Model::prepare(size_t tp, size_t t0, size_t tf, size_t tn) {
     model_->set(GRB_IntAttr_ModelSense, GRB_MAXIMIZE);
 
     model_->setObjectiveN(Model::objSkyCov(), 0, 2);
-    // model_->getMultiobjEnv(0).set(GRB_DoubleParam_TimeLimit, 600.0);
+    model_->getMultiobjEnv(0).set(GRB_DoubleParam_TimeLimit, 600.0);
 
     model_->setObjectiveN(Model::objBaselines(t0, tf), 1, 1);
-    model_->getMultiobjEnv(1).set(GRB_DoubleParam_TimeLimit, 600.0);
+    model_->getMultiobjEnv(1).set(GRB_DoubleParam_TimeLimit, 300.0);
 
 #ifdef VIESCHEDPP_LOG
         BOOST_LOG_TRIVIAL( info ) << "Finished building ILP model";
@@ -229,12 +229,12 @@ void Model::constrSlew(size_t tp, size_t t0, size_t tf, size_t tn) {
     size_t count = 0;
     for(Station& s : ModelBase::getStations()) {
         for(const auto q1 : ModelBase::getSources()) {
-            for(size_t t1 : ModelBase::getBlocks(t0, tf, q1, s)) {
+            for(size_t t1 : ModelBase::getBlocks(tp, tf, q1, s)) {
                 auto lhs = *getVar(ModelKey::StaActive(this, q1, s, t1));
                 GRBLinExpr rhs;
                 for(const auto q2 : ModelBase::getSources()) {
                     if(q1->getId() == q2->getId()) continue;
-                    for(size_t t2 : ModelBase::getBlocks(t1, tf, q2, s)) {
+                    for(size_t t2 : ModelBase::getBlocks(t1, tn, q2, s)) {
                         size_t t_slew = Model::calculateSlewTime(s, q1, q2, t1, t2);
                         if(t1 + t_slew < t2) continue;
                         rhs += *getVar(ModelKey::StaActive(this, q2, s, t2));
@@ -264,6 +264,13 @@ void Model::constrSlew(size_t tp, size_t t0, size_t tf, size_t tn) {
                             if(t1 + t_slew >= t0) {
                                 for(size_t t2 : ModelBase::getBlocks(t0, t1 + t_slew + 1, q2, s)) { // ending
                                     auto var = *getVar(ModelKey::StaActive(this, q2, s, t2));
+                                    if(var.get(GRB_DoubleAttr_Start) > 0.5) {
+#ifdef VIESCHEDPP_LOG
+                                        BOOST_LOG_TRIVIAL( info ) << "Forbade " << q2->getName() << " by " << s.getName() << " at " << t2 << "during the backward slew violation check, but it was set to 1 by warm-start";
+#else
+                                        std::cout << "[info] Forbade " << q2->getName() << " by " << s.getName() << " at " << t2 << "during the backward slew violation check, but it was set to 1 by warm-start";
+#endif
+                                    }
                                     var.set(GRB_DoubleAttr_LB, 0.0);
                                     var.set(GRB_DoubleAttr_UB, 0.0);
                                     ++count;
@@ -297,6 +304,13 @@ next_backward:;
                                 // force these variables to 0
                                 for(size_t t2 : ModelBase::getBlocks(t1 - t_slew, tf, q2, s)) {
                                     auto var = *getVar(ModelKey::StaActive(this, q2, s, t2));
+                                    if(var.get(GRB_DoubleAttr_Start) > 0.5) {
+#ifdef VIESCHEDPP_LOG
+                                        BOOST_LOG_TRIVIAL( info ) << "Forbade " << q2->getName() << " by " << s.getName() << " at " << t2 << "during the forward slew violation check, but it was set to 1 by warm-start";
+#else
+                                        std::cout << "[info] Forbade " << q2->getName() << " by " << s.getName() << " at " << t2 << "during the forward slew violation check, but it was set to 1 by warm-start";
+#endif
+                                    }
                                     var.set(GRB_DoubleAttr_LB, 0.0);
                                     var.set(GRB_DoubleAttr_UB, 0.0);
                                     count++;
