@@ -137,6 +137,11 @@ ModelBase::ModelBase(VieVS::Network& network, VieVS::SourceList& sourceList,
             }
         }
     }
+#ifdef VIESCHEDPP_LOG
+        BOOST_LOG_TRIVIAL( info ) << "Finished validating station and baseline viability";
+#else
+        std::cout << "[info] Finished validating station and baseline viability";
+#endif
 #endif // WITH_GUROBI
 }
 
@@ -401,6 +406,7 @@ bool ModelBase::checkBaselineViability(size_t t, std::shared_ptr<const VieVS::Ab
     const Baseline& b) noexcept {
     auto s1 = network_.getStation(b.getStaid1());
     auto s2 = network_.getStation(b.getStaid2());
+    if(!ModelBase::checkStationVisibility(t, q, s1) || !ModelBase::checkStationVisibility(t, q, s2)) return false;
     size_t maxScan = (std::min(std::min(s1.getPARA().maxScan, s2.getPARA().maxScan), q->getPARA().maxScan) + blockLength_ - 1) / blockLength_;
     bool viable = false;
     for(auto& mode : modes_->getModes()) {
@@ -409,7 +415,7 @@ bool ModelBase::checkBaselineViability(size_t t, std::shared_ptr<const VieVS::Ab
             break;
         }
     }
-    return viable && ModelBase::checkStationVisibility(t, q, s1) && ModelBase::checkStationVisibility(t, q, s2);
+    return viable;
 }
 
 unsigned int ModelBase::calculateMinObsExact(unsigned int t,
@@ -431,6 +437,30 @@ unsigned int ModelBase::calculateMinObsExact(unsigned int t,
     double date2 = TimeSystem::mjdStart + static_cast<double>( t ) / 86400.0;
     double gmst = iauGmst82( date1, date2 );
 
+    PointingVector pv1(staid1, q->getId());
+    PointingVector pv2(staid2, q->getId());
+
+    pv1.setTime(t);
+    pv2.setTime(t);
+    sta1.calcAzEl_rigorous(q, pv1);
+    sta2.calcAzEl_rigorous(q, pv2);
+
+    // calculate system equivalent flux density for each station
+    double el1 = pv1.getEl();
+    double el2 = pv2.getEl();
+
+    const auto& sta1Para = sta1.getPARA();
+    const auto& sta2Para = sta2.getPARA();
+    const auto& srcPara  = q->getPARA();
+    const auto& blPara   = b.getParameters();
+
+    double maxCorSynch1 = sta1Para.midob;
+    double maxCorSynch2 = sta2Para.midob;
+    // get maximum correlator synchronization time for
+    double maxCorSynch = std::max( { maxCorSynch1, maxCorSynch2 } );
+
+    double efficiency = mode->efficiency( sta1.getId(), sta2.getId() );
+
     unsigned int maxDuration = 0;
     for(auto &band : mode->getAllBands()) {
         double SEFD_src;
@@ -448,37 +478,20 @@ unsigned int ModelBase::calculateMinObsExact(unsigned int t,
         if ( SEFD_src == 0 ) {
             SEFD_src = 1e-3;
         }
-
-        PointingVector pv1(staid1, q->getId());
-        PointingVector pv2(staid2, q->getId());
-
-        pv1.setTime(t);
-        pv2.setTime(t);
-        sta1.calcAzEl_rigorous(q, pv1);
-        sta2.calcAzEl_rigorous(q, pv2);
-
-        // calculate system equivalent flux density for each station
-        double el1 = pv1.getEl();
+        
         double SEFD_sta1 = sta1.getEquip().getSEFD( band, el1 );
-        double el2 = pv2.getEl();
         double SEFD_sta2 = sta2.getEquip().getSEFD( band, el2 );
 
         // get minimum required SNR for each station, baseline and source
-        double minSNR_sta1 = sta1.getPARA().minSNR.at( band );
-        double minSNR_sta2 = sta2.getPARA().minSNR.at( band );
-        double minSNR_bl = b.getParameters().minSNR.at( band );
-        double minSNR_src = q->getPARA().minSNR.at( band );
+        double minSNR_sta1 = sta1Para.minSNR.at( band );
+        double minSNR_sta2 = sta2Para.minSNR.at( band );
+        double minSNR_bl = blPara.minSNR.at( band );
+        double minSNR_src = srcPara.minSNR.at( band );
 
         // maximum required minSNR
         double maxminSNR = std::max( { minSNR_src, minSNR_bl, minSNR_sta1, minSNR_sta2 } );
 
-        // get maximum correlator synchronization time for
-        double maxCorSynch1 = sta1.getPARA().midob;
-        double maxCorSynch2 = sta2.getPARA().midob;
-        double maxCorSynch = std::max( { maxCorSynch1, maxCorSynch2 } );
-
         // calc required baseline scan duration
-        double efficiency = mode->efficiency( sta1.getId(), sta2.getId() );
         double anum = ( maxminSNR / ( SEFD_src * efficiency ) );
         double anu1 = SEFD_sta1 * SEFD_sta2;
         double anu2 = mode->recordingRate( staid1, staid2, band );
@@ -490,11 +503,11 @@ unsigned int ModelBase::calculateMinObsExact(unsigned int t,
         auto new_duration_uint = static_cast<unsigned int>( new_duration );
 
         // check if required baseline scan duration is within min and max scan times of baselines
-        unsigned int minScanBl = b.getParameters().minScan;
+        unsigned int minScanBl = blPara.minScan;
         if ( new_duration_uint < minScanBl ) {
             new_duration_uint = minScanBl;
         }
-        unsigned int maxScanBl = b.getParameters().maxScan;
+        unsigned int maxScanBl = blPara.maxScan;
         if(new_duration_uint > maxDuration) {
             maxDuration = new_duration_uint;
         }
@@ -744,6 +757,83 @@ ModelBase::ModelKey ModelBase::ModelKey::StaCoverage(const ModelBase* model, con
     return key;
 }
 
+std::set<std::tuple<const Observation*, size_t, size_t>> ModelBase::validateScan(const std::set<std::tuple<const Observation*, size_t, size_t>>& obs) {
+    if(obs.empty()) return {};
+    const auto q = sourceList_.getSource(std::get<0>(*obs.begin())->getSrcid());
+    size_t minNumberOfSites = static_cast<size_t>(q->getPARA().minNumberOfSites);
+    // find the combined largest span
+    size_t t_start_comb = std::numeric_limits<size_t>::max();
+    size_t t_end_comb = 0;
+    for(const auto& data : obs) {
+        const Observation* obs = std::get<0>(data);
+        t_start_comb = std::min(t_start_comb, std::get<1>(data));
+        t_end_comb = std::max(t_end_comb, std::get<2>(data));
+    }   
+
+    if(t_start_comb >= t_end_comb) return {};
+
+    // construct a set of participating stations over each time segment
+    std::vector<std::set<unsigned long>> sitesPerSegment{t_end_comb - t_start_comb};
+    for(const auto& data : obs) {
+        const Observation* obs = std::get<0>(data);
+        size_t t_obs_start = std::get<1>(data);
+        size_t t_obs_end = std::get<2>(data);
+        for(size_t t_obs = t_obs_start - t_start_comb; t_obs < t_obs_end - t_start_comb; ++t_obs) {
+            sitesPerSegment[t_obs].emplace(obs->getStaid1());
+            sitesPerSegment[t_obs].emplace(obs->getStaid2());
+        }
+    }   
+
+#ifdef VIESCHEDPP_LOG
+    BOOST_LOG_TRIVIAL( warning ) << "Finished building sitesPerSegment!";
+#else
+    std::cout << "[warning] Finished building sitesPerSegment!";
+#endif
+
+    // find the span where the minNumberOfSites is respected
+    size_t first = 0;
+    while(first < sitesPerSegment.size() && sitesPerSegment[first].size() < minNumberOfSites) ++first;
+    if(first == sitesPerSegment.size()) return {}; // skip to next scan, nothing here can be added to the warm start
+    size_t last = first;
+    while(last + 1 < sitesPerSegment.size() && sitesPerSegment[last + 1].size() >= minNumberOfSites) ++last;
+    size_t new_start = t_start_comb + first;
+    size_t new_end   = t_start_comb + last + 1;
+    t_start_comb = new_start;
+    t_end_comb   = new_end;
+    
+#ifdef VIESCHEDPP_LOG
+    BOOST_LOG_TRIVIAL( warning ) << "Finished finding final span!";
+#else
+    std::cout << "[warning] Finished finding final span!";
+#endif  
+
+    // one more check for SNR
+    std::set<std::tuple<const Observation*, size_t, size_t>> obsValidInner;
+    for(const auto& data : obs) {
+        bool viable = true;
+        const Observation* obs = std::get<0>(data);
+        const Baseline& b = network_.getBaseline(obs->getBlid());
+        const Station& s1 = network_.getStation(b.getStaid1());
+        const Station& s2 = network_.getStation(b.getStaid2());
+        size_t t_start_curr = std::max(t_start_comb, std::get<1>(data));
+        size_t t_end_curr = std::min(t_end_comb, std::get<2>(data));
+        for(size_t t = t_start_curr; t < t_end_curr; ++t) {
+            size_t dur = std::numeric_limits<size_t>::max();
+            for(auto& mode : modes_->getModes()) {
+                dur = std::min(dur, ModelBase::calculateMinObs(t_start_curr, q, b, mode));
+            }
+            if(t_end_curr - t_start_curr < dur) {
+                viable = false;
+                break;
+            }
+        }
+        if(viable) {
+            obsValidInner.emplace(obs, std::max(t_start_comb, std::get<1>(data)), std::min(t_end_comb, std::get<2>(data)));
+        }
+    }        
+    return obsValidInner;
+}
+
 void ModelBase::loadScans(const std::vector<Scan>& scans) {
     if(scans.empty()) {
 #ifdef VIESCHEDPP_LOG
@@ -756,98 +846,92 @@ void ModelBase::loadScans(const std::vector<Scan>& scans) {
 
     // populate starting values from given scans
     for(const Scan& scan : scans) {
-        std::shared_ptr<const VieVS::AbstractSource> const q = sourceList_.getSource(scan.getSourceId());
-        if(sourceMask_.count(q->getId()) == 0) continue;
         const ScanTimes& scanTimes = scan.getTimes();
-        size_t minNumberOfSites = static_cast<size_t>(q->getPARA().minNumberOfSites);
-        
-
 
         // populate BlnActive variables
-        std::set<std::tuple<const Observation*, size_t, size_t>> obsValid;
+        std::map<unsigned long, std::set<std::tuple<const Observation*, size_t, size_t>>> obsValid;
         for(const Observation& obs : scan.getObservations()) {
+            const auto q = sourceList_.getSource(obs.getSrcid());
+            if(sourceMask_.count(q->getId()) == 0) continue;
             const Baseline& b = network_.getBaseline(obs.getBlid());
             Station& s1 = network_.refStation(b.getStaid1());
             Station& s2 = network_.refStation(b.getStaid2());
+
             // observation start blocks
-            size_t t10 = (scanTimes.getObservingTime(s1.getId()) + blockLength_ - 1) / blockLength_;
-            size_t t20 = (scanTimes.getObservingTime(s2.getId()) + blockLength_ - 1) / blockLength_;
+            size_t t10 = (scanTimes.getObservingTime(s1.getId())) / blockLength_;
+            size_t t20 = (scanTimes.getObservingTime(s2.getId())) / blockLength_;
+
+            // check that these are possible, if they aren't then advance by one segment
+            if(getSol(ModelKey::StaActive(this, q, s1, t10))) {
+                for(const auto q2 : sourceList_.getSources()) {
+                    if(q->getId() == q2->getId()) continue;
+                    if(auto sol = getSol(ModelKey::StaActive(this, q2, s1, t10))) {
+                        if(*sol) {
+                            ++t10;
+                            break;
+                        }
+                    }
+                }
+                for(size_t t = t10; t-- > 0;) {
+                    for(const auto q2 : sourceList_.getSources()) {
+                        if(q->getId() == q2->getId()) continue;
+                        if(auto sol = getSol(ModelKey::StaActive(this, q2, s1, t))) {
+                            if(*sol) {
+                                // then we need to check slew time
+                                size_t t_slew = ModelBase::calculateSlewTime(s1, q2, q, t, t10);
+                                if(t + t_slew >= t10) t10++;
+                                goto terminate_s1;
+                            }
+                        }
+                    }
+                }
+terminate_s1:;
+            }
+            while(!getSol(ModelKey::StaActive(this, q, s1, t10)) && t10 < blockCount_) ++t10;
+
+            // start by flooring the scan starts, then check if there is enough slew time
+            if(getSol(ModelKey::StaActive(this, q, s2, t20))) {
+                for(const auto q2 : sourceList_.getSources()) {
+                    if(q->getId() == q2->getId()) continue;
+                    if(auto sol = getSol(ModelKey::StaActive(this, q2, s2, t20))) {
+                        if(*sol) {
+                            ++t20;
+                            break;
+                        }
+                    }
+                }
+                for(size_t t = t20; t-- > 0;) {
+                    for(const auto q2 : sourceList_.getSources()) {
+                        if(q->getId() == q2->getId()) continue;
+                        if(auto sol = getSol(ModelKey::StaActive(this, q2, s2, t))) {
+                            if(*sol) {
+                                // then we need to check slew time
+                                size_t t_slew = ModelBase::calculateSlewTime(s2, q2, q, t, t20);
+                                if(t + t_slew >= t20) t20++;
+                                goto terminate_s2;
+                            }
+                        }
+                    }
+                }
+terminate_s2:;
+            }
+            while(!getSol(ModelKey::StaActive(this, q, s2, t20)) && t20 < blockCount_) ++t20;
+
             // the number of blocks each station is observing
             size_t t1f = t10 + scanTimes.getObservingDuration(s1.getId()) / blockLength_;
             size_t t2f = t20 + scanTimes.getObservingDuration(s2.getId()) / blockLength_;
             t1f = std::min(t1f, blockCount_);
             t2f = std::min(t2f, blockCount_);
+            while(!getSol(ModelKey::StaActive(this, q, s1, t1f)) && t1f > 0) --t1f;
+            while(!getSol(ModelKey::StaActive(this, q, s2, t2f)) && t2f > 0) --t2f;
+
+            // check if any starts exceed the ends
+            if(t10 >= t1f) continue;
+            if(t20 >= t2f) continue;
             
-            bool started = false;
             size_t t_start = std::max(t10, t20);
             size_t t_end = std::min(t1f, t2f);
-            size_t t_delayed = 0;
-            size_t t_premature = 0;
-            for(size_t t = t_start; t < t_end; ++t) {
-                auto solS2 = getSol(ModelKey::StaActive(this, q, s1, t));
-                auto solS1 = getSol(ModelKey::StaActive(this, q, s2, t));
-                auto solBL = getSol(ModelKey::BlnActive(this, q, b, t));
-                if(!solS1 || !solS2 || !solBL) {
-                    if(started) {
-                        t_premature = t_end - t;
-                        break;
-                    }
-                    continue;
-                }
-                bool s1_available = true;
-                bool s2_available = true;
-                for(const auto q2 : ModelBase::getSources()) {
-                    if(q->getId() == q2->getId()) continue;
-                    if(auto sol1 = getSol(ModelKey::StaActive(this, q2, s1, t))) {
-                        if(*sol1) s1_available = false;
-                    }
-                    if(auto sol2 = getSol(ModelKey::StaActive(this, q2, s2, t))) {
-                        if(*sol2) s2_available = false;
-                    }
-                }
-                if(s1_available && s2_available) started = true;
-                if(!started) t_delayed = t - t_start;
-            }
-            if(t_delayed > 0 || t_premature > 0) {
-#ifdef VIESCHEDPP_LOG
-                BOOST_LOG_TRIVIAL( warning ) << "Observation from greedy solution truncated during discretization [delayed: " << t_delayed * blockLength_ << "s, premature: " << t_premature * blockLength_ << "s]";
-#else
-                std::cout << "[warning] Observation from greedy solution truncated during discretization [delayed: " << t_delayed * blockLength_ << "s, premature: " << t_premature * blockLength_ << "s]";
-#endif
-            }
-
-            // determine if this observation respects SNR constraints
-            t_start += t_delayed;
-            t_end -= t_premature;
-
-            if(t_start > 0) {
-                bool stationAlreadyActive = false;
-                for(auto q_other : ModelBase::getSources(t_start - 1, s1)) {
-                    if(q->getId() == q_other->getId()) continue;
-                    if(*getSol(ModelKey::StaActive(this, q_other, s1, t_start - 1))) {
-                        stationAlreadyActive = true;
-                        break;
-                    }
-                }
-                for(auto q_other : ModelBase::getSources(t_start - 1, s2)) {
-                    if(q->getId() == q_other->getId()) continue;
-                    if(*getSol(ModelKey::StaActive(this, q_other, s2, t_start - 1))) {
-                        stationAlreadyActive = true;
-                        break;
-                    }
-                }
-                if(stationAlreadyActive) t_start++;
-            }
-
-#ifdef VIESCHEDPP_LOG
-            BOOST_LOG_TRIVIAL( warning ) << "Checking validity [" << snr_.size() << "]";
-#else
-            std::cout << "[warning] Checking validity [" << snr_.size() << "]";
-#endif
             if(t_start >= t_end) continue;
-
-            // size_t maxScan = (std::min(q->getPARA().maxScan, std::min(s1.getPARA().maxScan, s2.getPARA().maxScan)) + blockLength_ - 1) / blockLength_;
-            // if(t_end - t_start > maxScan) t_start++;
 
             bool viable = true;
             for(size_t t = t_start; t < t_end; ++t) {
@@ -862,7 +946,10 @@ void ModelBase::loadScans(const std::vector<Scan>& scans) {
             }
             
             if(viable) {
-                obsValid.emplace(&obs, t_start, t_end);
+                if(obsValid.count(q->getId()) == 0) {
+                    obsValid.emplace(q->getId(), std::set<std::tuple<const Observation*, size_t, size_t>>{});
+                }
+                obsValid[q->getId()].emplace(&obs, t_start, t_end);
             }
         }
 
@@ -872,70 +959,29 @@ void ModelBase::loadScans(const std::vector<Scan>& scans) {
         std::cout << "[warning] Finished finding valid observations!";
 #endif
 
-        if(obsValid.empty()) continue;
+        for(auto obsValidQ : obsValid) {
+            auto q = sourceList_.getSource(std::get<0>(obsValidQ));
+            std::set<std::tuple<const Observation*, size_t, size_t>> obsValidCurr;
+            std::set<std::tuple<const Observation*, size_t, size_t>> obsValidNext = std::get<1>(obsValidQ);
+            do {
+                obsValidCurr = obsValidNext;
+                obsValidNext = ModelBase::validateScan(obsValidCurr);
+            } while(obsValidNext.size() < obsValidCurr.size() && !obsValidNext.empty());
 
-        // now that were done determining if the scans are valid after discretization
-        // we need to check that minNumberOfSites is respected
+            if(obsValidNext.empty()) continue;
 
-        // find the combined largest span
-        size_t t_start_comb = std::numeric_limits<size_t>::max();
-        size_t t_end_comb = 0;
-        for(const auto& data : obsValid) {
-            const Observation* obs = std::get<0>(data);
-            t_start_comb = std::min(t_start_comb, std::get<1>(data));
-            t_end_comb = std::max(t_end_comb, std::get<2>(data));
-        }   
-
-#ifdef VIESCHEDPP_LOG
-        BOOST_LOG_TRIVIAL( warning ) << "Found combined span!";
-#else
-        std::cout << "[warning] Found combined span!";
-#endif
-
-        // construct a set of participating stations over each time segment
-        std::vector<std::set<unsigned long>> sitesPerSegment{t_end_comb - t_start_comb};
-        for(const auto& data : obsValid) {
-            const Observation* obs = std::get<0>(data);
-            size_t t_obs_start = std::get<1>(data);
-            size_t t_obs_end = std::get<2>(data);
-            for(size_t t_obs = t_obs_start - t_start_comb; t_obs < t_obs_end - t_start_comb; ++t_obs) {
-                sitesPerSegment[t_obs].emplace(obs->getStaid1());
-                sitesPerSegment[t_obs].emplace(obs->getStaid2());
-            }
-        }   
-
-#ifdef VIESCHEDPP_LOG
-        BOOST_LOG_TRIVIAL( warning ) << "Finished building sitesPerSegment!";
-#else
-        std::cout << "[warning] Finished building sitesPerSegment!";
-#endif
-
-        // find the span where the minNumberOfSites is respected
-        size_t first = 0;
-        while(first < sitesPerSegment.size() && sitesPerSegment[first].size() < minNumberOfSites) ++first;
-        if(first == sitesPerSegment.size()) continue; // skip to next scan, nothing here can be added to the warm start
-        size_t last = first;
-        while(last + 1 < sitesPerSegment.size() && sitesPerSegment[last + 1].size() >= minNumberOfSites) ++last;
-        t_start_comb = t_start_comb + first;
-        t_end_comb = t_start_comb + last + 1;
-        
-#ifdef VIESCHEDPP_LOG
-        BOOST_LOG_TRIVIAL( warning ) << "Finished finding final span!";
-#else
-        std::cout << "[warning] Finished finding final span!";
-#endif
-
-        // finally, we have the combined start and end
-        // now we have to add each observation to the warm start
-        for(const auto& data : obsValid) {
-            const Observation* obs = std::get<0>(data);
-            const Baseline& b = network_.getBaseline(obs->getBlid());
-            const Station& s1 = network_.getStation(b.getStaid1());
-            const Station& s2 = network_.getStation(b.getStaid2());
-            for(size_t t = std::max(t_start_comb, std::get<1>(data)); t < std::min(t_end_comb, std::get<2>(data)); ++t) {
-                *getSol(ModelKey::StaActive(this, q, s1, t)) = true;
-                *getSol(ModelKey::StaActive(this, q, s2, t)) = true;
-                *getSol(ModelKey::BlnActive(this, q, b, t)) = true;
+            // finally, we have the combined start and end
+            // now we have to add each observation to the warm start
+            for(const auto& data : obsValidNext) {
+                const Observation* obs = std::get<0>(data);
+                const Baseline& b = network_.getBaseline(obs->getBlid());
+                const Station& s1 = network_.getStation(b.getStaid1());
+                const Station& s2 = network_.getStation(b.getStaid2());
+                for(size_t t = std::get<1>(data); t < std::get<2>(data); ++t) {
+                    *getSol(ModelKey::StaActive(this, q, s1, t)) = true;
+                    *getSol(ModelKey::StaActive(this, q, s2, t)) = true;
+                    *getSol(ModelKey::BlnActive(this, q, b, t)) = true;
+                }
             }
         }
     }

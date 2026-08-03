@@ -319,6 +319,7 @@ private:
             const std::vector<Scan>& scans) noexcept;
     };
 private:
+    std::set<std::tuple<const Observation*, size_t, size_t>> validateScan(const std::set<std::tuple<const Observation*, size_t, size_t>>& obs);
     void loadScans(const std::vector<Scan>& scans);
     std::vector<Scan> readScans(void) const noexcept;
 private:

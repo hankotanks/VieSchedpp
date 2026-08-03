@@ -167,7 +167,6 @@ void Model::constrDuration(size_t tp, size_t t0, size_t tf, size_t tn) {
             }
         }
     }
-
 #ifdef VIESCHEDPP_LOG
     BOOST_LOG_TRIVIAL( info ) << "Added " << count << " max scan duration constraints to model";
 #else
@@ -177,43 +176,33 @@ void Model::constrDuration(size_t tp, size_t t0, size_t tf, size_t tn) {
 
 void Model::constrSNR(size_t tp, size_t t0, size_t tf, size_t tn) {
     size_t count = 0;
+    auto add = [this](GRBLinExpr& expr, const ModelKey& key) {
+        if(auto var = this->getVar(key)) {
+            expr += *var;
+        } else if(auto sol = this->getSol(key)) {
+            expr += (*sol) ? 1 : 0;
+        } else return false;
+        return true;
+    };
+
     for(const auto q : ModelBase::getSources()) {
         for(const Baseline& b : ModelBase::getBaselines()) {
+            const Station& s1 = network_.getStation(b.getStaid1());
+            const Station& s2 = network_.getStation(b.getStaid2());
             for(size_t t1 : ModelBase::getBlocks(tp, tn, q, b)) {
-                GRBVar lhs = *getVar(ModelKey::BlnActive(this, q, b, t1));
                 size_t dur = std::numeric_limits<size_t>::max();
                 for(auto& mode : modes_->getModes()) {
                     dur = std::min(dur, Model::calculateMinObs(t1, q, b, mode));
                 }
-                // we want to get the # of blocks before and after to extend it, clipped to the complete schedule bounds
-                // if the duration would extend before the beginning of the entire schedule
-                size_t dur_prior = 0;
-                size_t dur_after = 0;
-                if(dur > 0) {
-                    dur_prior = std::min(dur - 1, t1);
-                    if(t1 + 1 >= blockCount_) {
-                        dur_after = 0;
-                    } else {
-                        dur_after = std::min(dur, blockCount_ - t1);
-                    }
-                }
-                if(t1 - dur_prior >= tf || t1 + dur_after <= t0) continue;
-                // next, compute all active baselines outside the observation window
-                size_t active = 0;
+                GRBVar lhs = *getVar(ModelKey::BlnActive(this, q, b, t1));
                 GRBLinExpr rhs;
-                for(size_t t2 : ModelBase::getBlocks(t1 - dur_prior, t1 + dur_after, q, b)) {
-                    if(t2 >= t0 && t2 < tf) {
-                        rhs += *getVar(ModelKey::BlnActive(this, q, b, t2));
-                    } else if(*getSol(ModelKey::BlnActive(this, q, b, t2))) {
-                        active++;
-                    }
-                }
-                if(rhs.size() > 0) {
-                    auto s1 = network_.getStation(b.getStaid1());
-                    auto s2 = network_.getStation(b.getStaid2());
-                    model_->addConstr(rhs + active >= lhs * (dur - 1), "constr_snr[<" + s1.getName() + ", " + s2.getName() + ">, " + q->getName() + " , " + std::to_string(t1) + ", " + std::to_string(dur) + "]");
+                if(!add(rhs, ModelKey::BlnActive(this, q, b, t1 + 1))) continue;
+                for(size_t i = 1; i < dur; ++i) {
+                    GRBLinExpr inner{rhs};
+                    add(inner, ModelKey::BlnActive(this, q, b, t1 - i));
+                    model_->addConstr(lhs <= inner, "constr_snr[<" + s1.getName() + ", " + s2.getName() + ">, " + q->getName() + " , " + std::to_string(t1) + ", " + std::to_string(dur) + ", " + std::to_string(i) + "]");
                     count++;
-                }
+                }   
             }
         }
     }
