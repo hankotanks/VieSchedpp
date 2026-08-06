@@ -18,7 +18,6 @@
 
 #include "Model.h"
 
-#include <limits>
 #include <memory>
 #include <numeric>
 
@@ -46,14 +45,10 @@ void Model::prepare(size_t tp, size_t t0, size_t tf, size_t tn) {
 
     model_->set(GRB_IntAttr_ModelSense, GRB_MAXIMIZE);
 
-    model_->setObjective(Model::objSkyCov() + Model::objBaselines(t0, tf));
-    model_->set(GRB_DoubleParam_TimeLimit, 1800.0);
+    model_->setObjectiveN(Model::objSkyCov(), 0, 2);
 
-    // model_->setObjectiveN(Model::objSkyCov(), 0, 2);
-    // model_->getMultiobjEnv(0).set(GRB_DoubleParam_TimeLimit, 3600.0);
-
-    // model_->setObjectiveN(Model::objBaselines(t0, tf), 1, 1);
-    // model_->getMultiobjEnv(1).set(GRB_DoubleParam_TimeLimit, 1800.0);
+    model_->setObjectiveN(Model::objBaselines(t0, tf), 1, 1);
+    model_->getMultiobjEnv(1).set(GRB_DoubleParam_TimeLimit, 1800.0);
 
 #ifdef VIESCHEDPP_LOG
         BOOST_LOG_TRIVIAL( info ) << "Finished building ILP model";

@@ -18,6 +18,7 @@
 
 #include "ModelBase.h"
 
+#include <algorithm>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -130,34 +131,51 @@ ModelBase::ModelBase(VieVS::Network& network, VieVS::SourceList& sourceList,
         }
     }
 
-    snr_threads_ = std::max(1u, std::thread::hardware_concurrency());
+    snr_threads_ = std::max(3u, std::thread::hardware_concurrency()) - 2; // leave space for one thread to monitor progress
     snr_block_count_ = (blockCount_ + snr_threads_ - 1) / snr_threads_;
     snr_.resize(snr_threads_);
 
-    std::vector<std::vector<ModelKey>> solutions(snr_threads_);
+#ifdef VIESCHEDPP_LOG
+    BOOST_LOG_TRIVIAL( info ) << "Checking viability of " << blockCount_ * ModelBase::getSources().size() * ModelBase::getBaselines().size() << " potential observations";
+#else
+    std::cout << "[info] Checking viability of " << blockCount_ * ModelBase::getSources().size() * ModelBase::getBaselines().size() << " potential observations";
+#endif
+
+    std::vector<std::vector<ModelKey>> obs(snr_threads_);
+
+    std::vector<std::atomic<float>> worker_progress(snr_threads_);
+    for(auto& p : worker_progress) p.store(0.f);
+    std::thread worker_monitor{[this, &worker_progress] {
+        float shared_progress = 0.f;
+        while(true) {
+            auto it = std::min_element(worker_progress.begin(), worker_progress.end(), 
+                [](const std::atomic<float>& fst, const std::atomic<float>& snd) {
+                    return fst.load(std::memory_order_relaxed) < snd.load(std::memory_order_relaxed);
+                });
+            shared_progress = it->load(std::memory_order_relaxed);
+#ifdef VIESCHEDPP_LOG
+            BOOST_LOG_TRIVIAL( info ) << "Progress: " << std::fixed << std::setprecision(2) << shared_progress * 100.f << "%";
+            boost::log::core::get()->flush();
+#else
+            std::cout << "[info] Progress: " << std::fixed << std::setprecision(2) << shared_progress * 100.f << "%" << std::flush;
+#endif
+            if(shared_progress >= 1.f) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10000));
+        }
+    }};
 
     std::vector<std::thread> workers;
-
-    std::cout << "checking "
-            << blockCount_ * ModelBase::getSources().size() * ModelBase::getBaselines().size()
-            << std::endl;
-
-    std::cout << "threads: " << snr_threads_ << std::endl;
-
     for(unsigned tid = 0; tid < snr_threads_; ++tid) {
-        workers.emplace_back([this, tid, &solutions] {
+        workers.emplace_back([this, tid, &obs, &worker_progress] {
             const size_t t0 = tid * snr_block_count_;
             const size_t tf = std::min(t0 + snr_block_count_, blockCount_);
 
-            auto& results = solutions[tid];
+            auto& results = obs[tid];
+            auto& progress = worker_progress[tid];
 
-            size_t total = (tf - t0) * ModelBase::getSources().size() * ModelBase::getBaselines().size();
-            size_t step = 0;
-            size_t count = 0;
             for(size_t t = t0; t < tf; ++t) {
                 for(const auto& q : ModelBase::getSources()) {
                     for(const Baseline& b : ModelBase::getBaselines()) {
-                        step++;
                         if(!ModelBase::checkBaselineViability(t, q, b))
                             continue;
                         results.emplace_back(
@@ -165,32 +183,17 @@ ModelBase::ModelBase(VieVS::Network& network, VieVS::SourceList& sourceList,
                         );
                     }
                 }
-                float percentage = static_cast<float>(step) / static_cast<float>(total) * 100.f;
-                if(percentage > count + 5) {
-                    std::cout << std::fixed << std::setprecision(2) << tid << ": " << percentage << std::endl;
-                    count += 5;
-                }
+                progress.store(static_cast<float>(t - t0 + 1) / static_cast<float>(tf - t0), std::memory_order_relaxed);
             }
-            
         });
     }
 
+    worker_monitor.join();
     for(auto& worker : workers) worker.join();
-    for(auto& results : solutions) {
+    for(auto& results : obs) {
         for(auto& key : results) ModelBase::addSol(std::move(key));
     }
     
-#if 0
-    // BlnActive
-    for(size_t t : ModelBase::getBlocks(0, blockCount_)) {
-        for(const auto q : ModelBase::getSources()) {
-            for(const Baseline& b : ModelBase::getBaselines()) {
-                if(!ModelBase::checkBaselineViability(t, q, b)) continue;
-                ModelBase::addSol(ModelKey::BlnActive(this, q, b, t));
-            }
-        }
-    }
-#endif
 #ifdef VIESCHEDPP_LOG
         BOOST_LOG_TRIVIAL( info ) << "Finished validating station and baseline viability";
 #else
@@ -338,12 +341,21 @@ next:;
         }
 
         // error checking
-        if(status != GRB_OPTIMAL && status != GRB_SUBOPTIMAL) {
-    #ifdef VIESCHEDPP_LOG
+        bool success = true;
+        if(status == GRB_TIME_LIMIT) {
+            if(model_->get(GRB_IntAttr_SolCount) == 0) {
+                success = false;
+            }
+        } else if(status != GRB_OPTIMAL && status != GRB_SUBOPTIMAL) {
+            success = false;
+        }
+
+        if(!success) {
+#ifdef VIESCHEDPP_LOG
             BOOST_LOG_TRIVIAL( info ) << "No optimal solution found between " << t0 * blockLength_ << " and " << tf * blockLength_;
-    #else
+#else
             std::cout << "[info] No optimal solution found between " << t0 * blockLength_ << " and " << tf * blockLength_;
-    #endif
+#endif
             return false;
         }
 
