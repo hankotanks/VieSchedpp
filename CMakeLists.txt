@@ -51,6 +51,7 @@
          Scheduler/SchedulerILP.cpp Scheduler/SchedulerILP.h
          Model/ModelBase.cpp Model/ModelBase.h
          Model/Model.cpp Model/Model.h
+         Model/Solution.cpp Model/Solution.h
          Input/SkdCatalogReader.cpp Input/SkdCatalogReader.h
          Station/SkyCoverage.cpp Station/SkyCoverage.h
          Misc/sofa.h Misc/sofam.h

@@ -26,14 +26,14 @@
 
 #ifndef MODEL_H
 #define MODEL_H
-#include <cassert>
 
+// gurobi
 #ifdef WITH_GUROBI
 #include <gurobi_c++.h>
 #endif // WITH_GUROBI
 
+// VieSchedpp
 #include "ModelBase.h"
-
 #include "../Source/SourceList.h"
 #include "../Station/Network.h"
 
@@ -87,22 +87,70 @@ public:
      * @author Hank Lewis
     */
     ~Model() = default;
+
 protected:
-    virtual void prepare(size_t tp, size_t t0, size_t tf, size_t tn) override;
+    /**
+     * @brief override of ModelBase::prepare, called once the model is initialized
+     * @author Hank Lewis
+    */
+    virtual void prepare(const Window& window) override;
+
 private:
 #ifdef WITH_GUROBI
-    void constrExclusive(size_t t0, size_t tf);
-    void constrBaseline(size_t t0, size_t tf);
-    void constrPairwise(size_t t0, size_t tf);
-    void constrDuration(size_t tp, size_t t0, size_t tf, size_t tn);
-    void constrSNR(size_t tp, size_t t0, size_t tf, size_t tn);
-    void constrSlew(size_t tp, size_t t0, size_t tf, size_t tn);
-    void constrCoverage(size_t tp, size_t t0, size_t tf, size_t tn);
+    /**
+     * @brief ensure no station makes two concurrent observations
+     * @author Hank Lewis
+    */
+    void constrExclusive(const Window& window);
+
+    /**
+     * @brief ensure StaActive is tied to BlnActive
+     * @author Hank Lewis
+    */
+    void constrBaseline(const Window& window);
+
+    /**
+     * @brief ensure minNumberOfSites is respected
+     * @author Hank Lewis
+    */
+    void constrPairwise(const Window& window);
+
+    /**
+     * @brief ensure max scan duration is respected
+     * @author Hank Lewis
+    */
+    void constrDuration(const Window& window);
+
+    /**
+     * @brief ensure sufficient time for observations
+     * @author Hank Lewis
+    */
+    void constrSNR(const Window& window);
+
+    /**
+     * @brief ensure enough time to slew between observations
+     * @author Hank Lewis
+    */
+    void constrSlew(const Window& window);
+
+    /**
+     * @brief ensure StaCoverage tied to StaActive
+     * @author Hank Lewis
+    */
+    void constrCoverage(const Window& window);
+
 private:
-    GRBLinExpr objSkyCov();
-    GRBLinExpr objBaselines(size_t t0, size_t tf);
-private:
-    std::set<ModelKey> fixed_;
+    /**
+     * @brief sky coverage objected
+     * @author Hank Lewis
+    */
+    GRBLinExpr objSkyCov(const Window& window);
+
+    /**
+     * @brief baseline objective, weighted by baseline length
+     * @author Hank Lewis
+    */
+    GRBLinExpr objBaselines(const Window& window);
 #endif // WITH_GUROBI
 };
 }

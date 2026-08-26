@@ -18,20 +18,22 @@
 
 #include "Model.h"
 
+// system
 #include <memory>
 #include <numeric>
 
+// gurobi
 #ifdef WITH_GUROBI
 #include "gurobi_c++.h"
 #endif // WITH_GUROBI
 
 namespace VieVS {
-void Model::prepare(size_t tp, size_t t0, size_t tf, size_t tn) {
-    Model::constrPairwise(t0, tf);
-    Model::constrBaseline(t0, tf);
-    Model::constrSlew(tp, t0, tf, tn);
-    Model::constrDuration(tp, t0, tf, tn);
-    Model::constrCoverage(tp, t0, tf, tn);
+void Model::prepare(const Window& window) {
+    Model::constrPairwise(window);
+    Model::constrBaseline(window);
+    Model::constrSlew(window);
+    Model::constrDuration(window);
+    Model::constrCoverage(window);
 
 #if 0
     // NOTE: should be included in Model::constrSlew now
@@ -40,16 +42,16 @@ void Model::prepare(size_t tp, size_t t0, size_t tf, size_t tn) {
 
 #if 1
     // TODO: unfinished
-    Model::constrSNR(tp, t0, tf, tn);
+    Model::constrSNR(window);
 #endif
 
     model_->set(GRB_IntAttr_ModelSense, GRB_MAXIMIZE);
 
-    model_->setObjectiveN(Model::objSkyCov(), 0, 2);
-    model_->getMultiobjEnv(0).set(GRB_DoubleParam_TimeLimit, 600.0);
+    model_->setObjectiveN(Model::objSkyCov(window), 0, 2);
+    // model_->getMultiobjEnv(0).set(GRB_DoubleParam_TimeLimit, 600.0);
 
-    // model_->setObjectiveN(Model::objBaselines(t0, tf), 1, 1);
-    // model_->getMultiobjEnv(1).set(GRB_DoubleParam_TimeLimit, 900.0);
+    model_->setObjectiveN(Model::objBaselines(window), 1, 1);
+    model_->getMultiobjEnv(1).set(GRB_DoubleParam_TimeLimit, 300.0);
 
 #ifdef VIESCHEDPP_LOG
         BOOST_LOG_TRIVIAL( info ) << "Finished building ILP model";
@@ -59,15 +61,15 @@ void Model::prepare(size_t tp, size_t t0, size_t tf, size_t tn) {
 }
 
 #ifdef WITH_GUROBI
-void Model::constrExclusive(size_t t0, size_t tf) {
+void Model::constrExclusive(const Window& window) {
     // s can only observe one q at time t
     size_t count = 0;
-    for(size_t t : ModelBase::getBlocks(t0, tf)) {
-        for(Station& s : ModelBase::getStations()) {
+    for(size_t t : sol_.getBlocks(window.t0, window.tf)) {
+        for(const Station& s : sol_.getStations()) {
             GRBLinExpr lhs;
             size_t lhsCount = 0;
-            for(const auto q : ModelBase::getSources(t, s)) {
-                lhs += *getVar(ModelKey::StaActive(this, q, s, t));
+            for(const auto q : sol_.getSources(t, s)) {
+                lhs += *getVar(Solution::Key::StaActive(&sol_, q, s, t));
                 lhsCount++;
             }
             if(lhsCount > 0) {
@@ -84,19 +86,20 @@ void Model::constrExclusive(size_t t0, size_t tf) {
 #endif
 }
 
-void Model::constrBaseline(size_t t0, size_t tf) {
+void Model::constrBaseline(const Window& window) {
     // if <s1, s2> is active at t, both must observe q at t
     size_t count = 0;
-    for(size_t t : ModelBase::getBlocks(t0, tf)) {
-        for(const auto q : ModelBase::getSources()) {
-            for(const Baseline& b : ModelBase::getBaselines(t, q)) {
-                const Station& s1 = network_.getStation(b.getStaid1());
-                const Station& s2 = network_.getStation(b.getStaid2());
+    for(size_t t : sol_.getBlocks(window.t0, window.tf)) {
+        for(const auto q : sol_.getSources()) {
+            for(const Baseline& b : sol_.getBaselines(t, q)) {
+                auto s = sol_.getStations(b);
+                const Station& s1 = s.first;
+                const Station& s2 = s.second;
                 GRBVar lhs, rhs;
-                lhs = *getVar(ModelKey::BlnActive(this, q, b, t));
-                rhs = *getVar(ModelKey::StaActive(this, q, s1, t));
+                lhs = *getVar(Solution::Key::BlnActive(&sol_, q, b, t));
+                rhs = *getVar(Solution::Key::StaActive(&sol_, q, s1, t));
                 model_->addConstr(lhs <= rhs, "constr_baseline[<" + s1.getName() + ", " + s2.getName() + ">, " + q->getName() + ", " + std::to_string(t) + "]");
-                rhs = *getVar(ModelKey::StaActive(this, q, s2, t));
+                rhs = *getVar(Solution::Key::StaActive(&sol_, q, s2, t));
                 model_->addConstr(lhs <= rhs, "constr_baseline[<" + s2.getName() + ", " + s1.getName() + ">, " + q->getName() + ", " + std::to_string(t) + "]");
                 count += 2;
             }
@@ -110,19 +113,19 @@ void Model::constrBaseline(size_t t0, size_t tf) {
 #endif
 }
 
-void Model::constrPairwise(size_t t0, size_t tf) {
+void Model::constrPairwise(const Window& window) {
     // if s is observing q at t,
     // >= other station must be active for the same q, t
     size_t count = 0;
-    for(size_t t : ModelBase::getBlocks(t0, tf)) {
-        for(const auto q : ModelBase::getSources()) {
-            for(const Station& s1 : ModelBase::getStations(t, q)) {
-                GRBVar lhs = *getVar(ModelKey::StaActive(this, q, s1, t));
+    for(size_t t : sol_.getBlocks(window.t0, window.tf)) {
+        for(const auto q : sol_.getSources()) {
+            for(const Station& s1 : sol_.getStations(t, q)) {
+                GRBVar lhs = *getVar(Solution::Key::StaActive(&sol_, q, s1, t));
                 GRBLinExpr rhs;
                 size_t rhsCount = 0;
-                for(const Station& s2 : ModelBase::getStations(t, q)) {
+                for(const Station& s2 : sol_.getStations(t, q)) {
                     if(s1.getId() == s2.getId()) continue;
-                    rhs += *getVar(ModelKey::StaActive(this, q, s2, t));
+                    rhs += *getVar(Solution::Key::StaActive(&sol_, q, s2, t));
                     rhsCount++;
                 }
                 if(rhsCount > 0) {
@@ -140,24 +143,24 @@ void Model::constrPairwise(size_t t0, size_t tf) {
 #endif
 }
 
-void Model::constrDuration(size_t tp, size_t t0, size_t tf, size_t tn) {
+void Model::constrDuration(const Window& window) {
     size_t count = 0;
-    for(Station& s : ModelBase::getStations()) {
-        for(const auto q : ModelBase::getSources()) {
-            for(size_t t2 : ModelBase::getBlocks(t0, tn)) {
-                size_t maxScan = (std::min(q->getPARA().maxScan, s.getPARA().maxScan) + blockLength_ - 1) / blockLength_;
+    for(const Station& s : sol_.getStations()) {
+        for(const auto q : sol_.getSources()) {
+            for(size_t t2 : sol_.getBlocks(window.t0, window.tn)) {
+                size_t maxScan = sol_.getBlocks(std::min(q->getPARA().maxScan, s.getPARA().maxScan));
                 if(t2 < maxScan) continue;
                 // look backwards by minScan segments and forbid
                 GRBLinExpr lhs;
                 for(size_t k = 0; k <= maxScan; ++k) {
                     size_t t1 = t2 - k;
-                    if(t1 < t0) {
-                        if(auto sol = getSol(ModelKey::StaActive(this, q, s, t1))) {
-                            if(*sol) {
+                    if(t1 < window.t0) {
+                        if(auto result = sol_.getSol(Solution::Key::StaActive(&sol_, q, s, t1))) {
+                            if(*result) {
                                 --maxScan;
                             } else break;
                         } else break;
-                    } else if(auto var = getVar(ModelKey::StaActive(this, q, s, t1))) {
+                    } else if(auto var = getVar(Solution::Key::StaActive(&sol_, q, s, t1))) {
                         lhs += *var;
                     }
                 }
@@ -173,29 +176,31 @@ void Model::constrDuration(size_t tp, size_t t0, size_t tf, size_t tn) {
 #endif
 }
 
-void Model::constrSNR(size_t tp, size_t t0, size_t tf, size_t tn) {
+void Model::constrSNR(const Window& window) {
     size_t count = 0;
-    auto add = [this](GRBLinExpr& expr, const ModelKey& key) {
+    auto add = [this](GRBLinExpr& expr, const Solution::Key& key) {
         if(auto var = this->getVar(key)) {
             expr += *var;
-        } else if(auto sol = this->getSol(key)) {
-            expr += (*sol) ? 1 : 0;
+        } else if(auto result = this->sol_.getSol(key)) {
+            expr += (*result) ? 1 : 0;
         } else return false;
         return true;
     };
 
-    for(const auto q : ModelBase::getSources()) {
-        for(const Baseline& b : ModelBase::getBaselines()) {
-            const Station& s1 = network_.getStation(b.getStaid1());
-            const Station& s2 = network_.getStation(b.getStaid2());
-            for(size_t t1 : ModelBase::getBlocks(tp, tn, q, b)) {
-                size_t dur = Model::calculateMinObs(t1, q, b);
-                GRBVar lhs = *getVar(ModelKey::BlnActive(this, q, b, t1));
+    for(const auto q : sol_.getSources()) {
+        for(const Baseline& b : sol_.getBaselines()) {
+            auto s = sol_.getStations(b);
+            const Station& s1 = s.first;
+            const Station& s2 = s.second;
+            for(size_t t1 : sol_.getBlocks(window.tp, window.tn, q, b)) {
+                auto key = Solution::Key::BlnActive(&sol_, q, b, t1);
+                size_t dur = sol_.getMinObs(key);
+                GRBVar lhs = *getVar(key);
                 GRBLinExpr rhs;
-                if(!add(rhs, ModelKey::BlnActive(this, q, b, t1 + 1))) continue;
+                if(!add(rhs, Solution::Key::BlnActive(&sol_, q, b, t1 + 1))) continue;
                 for(size_t i = 1; i < dur; ++i) {
                     GRBLinExpr inner{rhs};
-                    add(inner, ModelKey::BlnActive(this, q, b, t1 - i));
+                    add(inner, Solution::Key::BlnActive(&sol_, q, b, t1 - i));
                     model_->addConstr(lhs <= inner, "constr_snr[<" + s1.getName() + ", " + s2.getName() + ">, " + q->getName() + " , " + std::to_string(t1) + ", " + std::to_string(dur) + ", " + std::to_string(i) + "]");
                     count++;
                 }   
@@ -209,20 +214,22 @@ void Model::constrSNR(size_t tp, size_t t0, size_t tf, size_t tn) {
 #endif
 }
 
-void Model::constrSlew(size_t tp, size_t t0, size_t tf, size_t tn) {
+void Model::constrSlew(const Window& window) {
     // there must be sufficient time in [t1, t2) for s to slew between q1, q2
     size_t count = 0;
-    for(Station& s : ModelBase::getStations()) {
-        for(const auto q1 : ModelBase::getSources()) {
-            for(size_t t1 : ModelBase::getBlocks(tp, tf, q1, s)) {
-                auto lhs = *getVar(ModelKey::StaActive(this, q1, s, t1));
+    for(const Station& s : sol_.getStations()) {
+        for(const auto q1 : sol_.getSources()) {
+            for(size_t t1 : sol_.getBlocks(window.tp, window.tf, q1, s)) {
+                auto key_from = Solution::Key::StaActive(&sol_, q1, s, t1);
+                auto lhs = *getVar(key_from);
                 GRBLinExpr rhs;
-                for(const auto q2 : ModelBase::getSources()) {
+                for(const auto q2 : sol_.getSources()) {
                     if(q1->getId() == q2->getId()) continue;
-                    for(size_t t2 : ModelBase::getBlocks(t1, tn, q2, s)) {
-                        size_t t_slew = Model::calculateSlewTime(s, q1, q2, t1, t2);
+                    for(size_t t2 : sol_.getBlocks(t1, window.tn, q2, s)) {
+                        auto key_to = Solution::Key::StaActive(&sol_, q2, s, t2);
+                        size_t t_slew = sol_.getSlew(key_from, key_to);
                         if(t1 + t_slew < t2) continue;
-                        rhs += *getVar(ModelKey::StaActive(this, q2, s, t2));
+                        rhs += *getVar(key_to);
                     }
                 }
                 model_->addGenConstrIndicator(lhs, 1, rhs == 0, "constr_slew[" + s.getName() + ", " + q1->getName() + " , " + std::to_string(t1) + "]");
@@ -236,19 +243,21 @@ void Model::constrSlew(size_t tp, size_t t0, size_t tf, size_t tn) {
     std::cout << "[info] Added " << count << " slew constraints to model";
 #endif
 
-    if(t0 > tp) {
+    if(window.t0 > window.tp) {
         count = 0;
-        for(Station& s : ModelBase::getStations()) {
-            for(const auto q1 : ModelBase::getSources()) { // starting
-                for(const auto q2 : ModelBase::getSources()) { // ending
+        for(const Station& s : sol_.getStations()) {
+            for(const auto q1 : sol_.getSources()) { // starting
+                for(const auto q2 : sol_.getSources()) { // ending
                     if(q1->getId() == q2->getId()) continue;
-                    for(size_t t1 : ModelBase::getBlocks(tp, t0, q1, s)) { // starting
-                        if(*getSol(ModelKey::StaActive(this, q1, s, t1))) {
+                    auto key_to = Solution::Key::StaActive(&sol_, q2, s, window.t0);
+                    for(size_t t1 : sol_.getBlocks(window.tp, window.t0, q1, s)) { // starting
+                        auto key_from = Solution::Key::StaActive(&sol_, q1, s, t1);
+                        if(*sol_.getSol(key_from)) {
                             // check if any slew windows extend into the active optimization window
-                            size_t t_slew = Model::calculateSlewTime(s, q1, q2, t1, t0);
-                            if(t1 + t_slew >= t0) {
-                                for(size_t t2 : ModelBase::getBlocks(t0, t1 + t_slew + 1, q2, s)) { // ending
-                                    auto var = *getVar(ModelKey::StaActive(this, q2, s, t2));
+                            size_t t_slew = sol_.getSlew(key_from, key_to);
+                            if(t1 + t_slew >= window.t0) {
+                                for(size_t t2 : sol_.getBlocks(window.t0, t1 + t_slew + 1, q2, s)) { // ending
+                                    auto var = *getVar(Solution::Key::StaActive(&sol_, q2, s, t2));
                                     if(var.get(GRB_DoubleAttr_Start) > 0.5) {
 #ifdef VIESCHEDPP_LOG
                                         BOOST_LOG_TRIVIAL( info ) << "Forbade " << q2->getName() << " by " << s.getName() << " at " << t2 << "during the backward slew violation check, but it was set to 1 by warm-start";
@@ -275,20 +284,22 @@ next_backward:;
 #endif
     }
     
-    if(tf < tn) {
+    if(window.tf < window.tn) {
         count = 0;
-        for(Station& s : ModelBase::getStations()) {
-            for(const auto q1 : ModelBase::getSources()) { // ending
-                for(const auto q2 : ModelBase::getSources()) { // starting
+        for(const Station& s : sol_.getStations()) {
+            for(const auto q1 : sol_.getSources()) { // ending
+                for(const auto q2 : sol_.getSources()) { // starting
                     if(q1->getId() == q2->getId()) continue;
-                    for(size_t t1 : ModelBase::getBlocks(tf, tn, q1, s)) { // ending
-                        if(*getSol(ModelKey::StaActive(this, q1, s, t1))) {
+                    auto key_from = Solution::Key::StaActive(&sol_, q2, s, window.tf);
+                    for(size_t t1 : sol_.getBlocks(window.tf, window.tn, q1, s)) { // ending
+                        auto key_to = Solution::Key::StaActive(&sol_, q1, s, t1);
+                        if(*sol_.getSol(key_to)) {
                             // check if any slew windows extend into the active optimization window
-                            size_t t_slew = Model::calculateSlewTime(s, q2, q1, tf, t1);
-                            if(t1 - t_slew < tf) {
+                            size_t t_slew = sol_.getSlew(key_from, key_to);
+                            if(t1 - t_slew < window.tf) {
                                 // force these variables to 0
-                                for(size_t t2 : ModelBase::getBlocks(t1 - t_slew, tf, q2, s)) {
-                                    auto var = *getVar(ModelKey::StaActive(this, q2, s, t2));
+                                for(size_t t2 : sol_.getBlocks(t1 - t_slew, window.tf, q2, s)) {
+                                    auto var = *getVar(Solution::Key::StaActive(&sol_, q2, s, t2));
                                     if(var.get(GRB_DoubleAttr_Start) > 0.5) {
 #ifdef VIESCHEDPP_LOG
                                         BOOST_LOG_TRIVIAL( info ) << "Forbade " << q2->getName() << " by " << s.getName() << " at " << t2 << "during the forward slew violation check, but it was set to 1 by warm-start";
@@ -316,18 +327,19 @@ next_forward:;
     }
 }
 
-void Model::constrCoverage(size_t tp, size_t t0, size_t tf, size_t tn) {
+void Model::constrCoverage(const Window& window) {
     // c is 'hit' if >= observations occurred over schedule duration
     size_t count = 0;
-    for(Station& s : ModelBase::getStations()) {
+    for(const Station& s : sol_.getStations()) {
         for(size_t c = 0; c < coverage_->cellCount(); ++c) {
-            GRBLinExpr lhs = *getVar(ModelKey::StaCoverage(this, s, c));
+            GRBLinExpr lhs = *getVar(Solution::Key::StaCoverage(&sol_, s, c));
             GRBLinExpr rhs;
             size_t rhsCount = 0;
-            for(size_t t : ModelBase::getBlocks(t0, tf)) {
-                for(const auto q : ModelBase::getSources(t, s)) {
-                    if(coverage_->calculateCell(this, t, q, s) != c) continue;
-                    rhs += *getVar(ModelKey::StaActive(this, q, s, t));
+            for(size_t t : sol_.getBlocks(window.t0, window.tf)) {
+                for(const auto q : sol_.getSources(t, s)) {
+                    auto pv = sol_.getPointingVector(Solution::Key::StaActive(&sol_, q, s, t));
+                    if(coverage_->calculateCell(*pv) != c) continue;
+                    rhs += *getVar(Solution::Key::StaActive(&sol_, q, s, t));
                     rhsCount++;
                 }
             }
@@ -345,25 +357,27 @@ void Model::constrCoverage(size_t tp, size_t t0, size_t tf, size_t tn) {
 #endif
 }
 
-GRBLinExpr Model::objSkyCov() {
+GRBLinExpr Model::objSkyCov(const Window& window) {
+    auto sta = sol_.getStations();
     // coverage objective
     GRBLinExpr obj;
-    double co = 1.0 / static_cast<double>(coverage_->cellCount()) / static_cast<double>(network_.getNSta());
-    for(const Station& s : ModelBase::getStations()) {
+    double co = 1.0 / static_cast<double>(coverage_->cellCount()) / static_cast<double>(sta.size());
+    for(const Station& s : sta) {
         for(size_t c = 0; c < coverage_->cellCount(); ++c) {
-            obj += *getVar(ModelKey::StaCoverage(this, s, c)) * co;
+            obj += *getVar(Solution::Key::StaCoverage(&sol_, s, c)) * co;
         }
     }
 
     return obj;
 }
 
-GRBLinExpr Model::objBaselines(size_t t0, size_t tf) {
+GRBLinExpr Model::objBaselines(const Window& window) {
     // baseline occurrence
     std::map<unsigned long, double> bLength;
-    for(const Baseline& b : ModelBase::getBaselines()) {
-        const Station& s1 = network_.getStation(b.getStaid1());
-        const Station& s2 = network_.getStation(b.getStaid2());
+    for(const Baseline& b : sol_.getBaselines()) {
+        auto s = sol_.getStations(b);
+        const Station& s1 = s.first;
+        const Station& s2 = s.second;
         double length = s1.getPosition()->getDistance(*s2.getPosition());
         bLength.insert(std::make_pair(b.getId(), length));
     }
@@ -383,19 +397,12 @@ GRBLinExpr Model::objBaselines(size_t t0, size_t tf) {
         [bSum](auto& entry) { entry.second /= bSum; });
 
     GRBLinExpr obj;
-    for(const Baseline& b : ModelBase::getBaselines()) {
+    for(const Baseline& b : sol_.getBaselines()) {
         double co = bCo.at(b.getId());
-#ifdef VIESCHEDPP_LOG
-    BOOST_LOG_TRIVIAL( info ) << network_.getStation(b.getStaid1()).getName() << 
-        "-" << network_.getStation(b.getStaid2()).getName() << " weighting: " << co;
-#else
-    std::cout << "[info] " << network_.getStation(b.getStaid1()).getName() << 
-        "-" << network_.getStation(b.getStaid2()).getName() << " weighting: " << co;
-#endif
-        co /= static_cast<double>(tf - t0);
-        for(size_t t : ModelBase::getBlocks(t0, tf)) {
-            for(const auto q : ModelBase::getSources(t, b)) {
-                obj += *getVar(ModelKey::BlnActive(this, q, b, t)) * co;
+        co /= static_cast<double>(window.tf - window.t0);
+        for(size_t t : sol_.getBlocks(window.t0, window.tf)) {
+            for(const auto q : sol_.getSources(t, b)) {
+                obj += *getVar(Solution::Key::BlnActive(&sol_, q, b, t)) * co;
             }
         }
     }
