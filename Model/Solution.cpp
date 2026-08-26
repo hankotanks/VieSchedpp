@@ -62,7 +62,8 @@ Solution::Solution(VieVS::Network& network, VieVS::SourceList& sourceList,
     src_.reserve(sourceMask_.size());
     std::transform(sourceMask_.begin(), sourceMask_.end(), std::back_inserter(src_), 
         [this](unsigned long obj) { return this->sourceList_.getSource(obj); });
-    // build sta2idx_
+    
+        // build sta2idx_
     for(const Station& s : sta_) {
         sta2idx_.insert(std::make_pair(s.getId(), sta2idx_.size()));
         idx2sta_.emplace_back(s.getId());
@@ -77,6 +78,7 @@ Solution::Solution(VieVS::Network& network, VieVS::SourceList& sourceList,
         src2idx_.insert(std::make_pair(q->getId(), src2idx_.size()));
         idx2src_.emplace_back(q->getId());
     }
+
     // populate pvs_
     for(size_t t = 0; t < blockCount_; ++t) {
         for(const auto q : src_) {
@@ -89,10 +91,31 @@ Solution::Solution(VieVS::Network& network, VieVS::SourceList& sourceList,
             }
         }
     }
+
+    // check for station events
+    std::map<unsigned long, std::map<size_t, bool>> events;
+    for(const Station& s : sta_) events.emplace(s.getId(), std::map<size_t, bool>{});
+    for(Station& s : sta) {
+        for(const auto& event : s.refParaForMultiScheduling()) {
+            if(event.PARA.available) {
+                events[s.getId()].emplace((event.time + blockLength_ - 1) / blockLength_, true);
+            } else {
+                events[s.getId()].emplace(event.time / blockLength_, false);
+            }
+        }
+    }
+
     // populate vis_
+    std::map<unsigned long, bool> available;
+    for(const Station& s : sta_) available.emplace(s.getId(), true);
     for(size_t t = 0; t < blockCount_; ++t) {
-        for(const auto q : src_) {
-            for(const Station& s : sta_) {
+        for(const Station& s : sta_) {
+            // update stations current availability
+            if(events[s.getId()].count(t) > 0) available[s.getId()] = events[s.getId()][t];
+            // skip visibility check if stations is down
+            if(!available[s.getId()]) continue;
+            // if its up, check availability
+            for(const auto q : src_) {
                 auto key = Key::StaActive(this, q, s, t);
                 bool vis;
                 if(!s.isVisible(pvs_.at(key), q->getPARA().minElevation)) {
@@ -109,6 +132,7 @@ Solution::Solution(VieVS::Network& network, VieVS::SourceList& sourceList,
             }
         }
     }
+
     // populate snr_
     for(size_t t = 0; t < blockCount_; ++t) {
         for(const auto q : src_) {
@@ -126,7 +150,8 @@ Solution::Solution(VieVS::Network& network, VieVS::SourceList& sourceList,
             }
         }
     }
-    // populate solution space
+
+    // populate solution space with StaActive
     for(size_t t = 0; t < blockCount_; ++t) {
         for(const auto q : src_) {
             for(const Station& s : sta_) {
@@ -137,6 +162,7 @@ Solution::Solution(VieVS::Network& network, VieVS::SourceList& sourceList,
         }
     }
 
+    // populate solution space with BlnActive
     for(size_t t = 0; t < blockCount_; ++t) {
         for(const auto q : src_) {
             for(const Baseline& b : bln_) {

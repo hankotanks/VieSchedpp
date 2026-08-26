@@ -344,6 +344,8 @@ private:
     std::set<unsigned long> sourceMask_;
     // observing modes
     std::shared_ptr<const ObservingMode> modes_;
+
+private:
     // number of blocks in the schedule
     size_t blockCount_;
     // the size of each time segment (in seconds)
@@ -354,6 +356,8 @@ private:
     unsigned int windowLength_;
     // number of segments in each window
     size_t windowBlockCount_;
+
+private:
     // bidirectional mapping of indices and ids
     std::map<unsigned long, size_t> sta2idx_;
     std::map<unsigned long, size_t> bln2idx_;
@@ -365,6 +369,8 @@ private:
     std::vector<std::reference_wrapper<const Station>> sta_;
     std::vector<std::reference_wrapper<const Baseline>> bln_;
     std::vector<std::shared_ptr<const AbstractSource>> src_;
+
+private:
     // the solution map (StaActive and BlnActive)
     std::map<Key, bool> sol_;
     // precomputed pointing vectors (StaActive)

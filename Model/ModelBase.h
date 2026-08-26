@@ -290,6 +290,8 @@ protected:
     Solution sol_;
     // sky coverage model
     std::unique_ptr<ModelCoverage> coverage_;
+
+protected:
     // gurobi environment
     std::unique_ptr<GRBEnv> env_{nullptr};
     std::unique_ptr<GRBModel> model_{nullptr};
