@@ -121,7 +121,37 @@ ModelBase::ModelBase(VieVS::Network& network, VieVS::SourceList& sourceList,
         src2idx_.insert(std::make_pair(q->getId(), src2idx_.size()));
     }
 
-    // StaActive
+    for(size_t t = 0; t <= blockCount_; ++t) {
+        for(const auto q : ModelBase::getSources()) {
+            for(Station& s : ModelBase::getStations()) {
+                auto key = ModelKey::StaActive(this, q, s, t);
+                PointingVector pv0(s.getId(), q->getId());
+                pv0.setTime(t * blockLength_);
+                s.calcAzEl_rigorous( q, pv0);
+                pvs_.emplace(key, pv0);
+            }
+        }
+    }
+
+    for(size_t t = 0; t <= blockCount_; ++t) {
+        for(const auto q : ModelBase::getSources()) {
+            for(Station& s : ModelBase::getStations()) {
+                auto key = ModelKey::StaActive(this, q, s, t);
+                bool vis;
+                if(!s.isVisible(pvs_.at(ModelKey::StaActive(this, q, s, t)), q->getPARA().minElevation)) {
+                    vis = false;
+                } else {
+                    if(t + 1 < blockCount_) {
+                        vis = s.isVisible(pvs_.at(ModelKey::StaActive(this, q, s, t + 1)), q->getPARA().minElevation);
+                    } else {
+                        vis = true;
+                    }
+                }
+                vis_.emplace(key, vis);
+            }
+        }
+    }
+
     for(size_t t : ModelBase::getBlocks(0, blockCount_)) {
         for(const auto q : ModelBase::getSources()) {
             for(Station& s : ModelBase::getStations()) {
@@ -131,69 +161,20 @@ ModelBase::ModelBase(VieVS::Network& network, VieVS::SourceList& sourceList,
         }
     }
 
-    snr_threads_ = std::max(3u, std::thread::hardware_concurrency()) - 2; // leave space for one thread to monitor progress
-    snr_block_count_ = (blockCount_ + snr_threads_ - 1) / snr_threads_;
-    snr_.resize(snr_threads_);
-
-#ifdef VIESCHEDPP_LOG
-    BOOST_LOG_TRIVIAL( info ) << "Checking viability of " << blockCount_ * ModelBase::getSources().size() * ModelBase::getBaselines().size() << " potential observations";
-#else
-    std::cout << "[info] Checking viability of " << blockCount_ * ModelBase::getSources().size() * ModelBase::getBaselines().size() << " potential observations";
-#endif
-
-    std::vector<std::vector<ModelKey>> obs(snr_threads_);
-
-    std::vector<std::atomic<float>> worker_progress(snr_threads_);
-    for(auto& p : worker_progress) p.store(0.f);
-    std::thread worker_monitor{[this, &worker_progress] {
-        float shared_progress = 0.f;
-        while(true) {
-            auto it = std::min_element(worker_progress.begin(), worker_progress.end(), 
-                [](const std::atomic<float>& fst, const std::atomic<float>& snd) {
-                    return fst.load(std::memory_order_relaxed) < snd.load(std::memory_order_relaxed);
-                });
-            shared_progress = it->load(std::memory_order_relaxed);
-#ifdef VIESCHEDPP_LOG
-            BOOST_LOG_TRIVIAL( info ) << "Progress: " << std::fixed << std::setprecision(2) << shared_progress * 100.f << "%";
-            boost::log::core::get()->flush();
-#else
-            std::cout << "[info] Progress: " << std::fixed << std::setprecision(2) << shared_progress * 100.f << "%" << std::flush;
-#endif
-            if(shared_progress >= 1.f) break;
-            std::this_thread::sleep_for(std::chrono::milliseconds(10000));
-        }
-    }};
-
-    std::vector<std::thread> workers;
-    for(unsigned tid = 0; tid < snr_threads_; ++tid) {
-        workers.emplace_back([this, tid, &obs, &worker_progress] {
-            const size_t t0 = tid * snr_block_count_;
-            const size_t tf = std::min(t0 + snr_block_count_, blockCount_);
-
-            auto& results = obs[tid];
-            auto& progress = worker_progress[tid];
-
-            for(size_t t = t0; t < tf; ++t) {
-                for(const auto& q : ModelBase::getSources()) {
-                    for(const Baseline& b : ModelBase::getBaselines()) {
-                        if(!ModelBase::checkBaselineViability(t, q, b))
-                            continue;
-                        results.emplace_back(
-                            ModelKey::BlnActive(this, q, b, t)
-                        );
-                    }
-                }
-                progress.store(static_cast<float>(t - t0 + 1) / static_cast<float>(tf - t0), std::memory_order_relaxed);
+    for(size_t t : ModelBase::getBlocks(0, blockCount_)) {
+        for(const auto q : ModelBase::getSources()) {
+            for(const Baseline& b : ModelBase::getBaselines()) {
+                if(!ModelBase::checkBaselineViability(t, q, b)) continue;
+                ModelBase::addSol(ModelKey::BlnActive(this, q, b, t));
             }
-        });
+        }
     }
 
-    worker_monitor.join();
-    for(auto& worker : workers) worker.join();
-    for(auto& results : obs) {
-        for(auto& key : results) ModelBase::addSol(std::move(key));
+    for(const Station& s : ModelBase::getStations()) {
+        for(std::size_t c = 0; c < coverage_->cellCount(); ++c) {
+            ModelBase::addSol(ModelKey::StaCoverage(this, s, c));
+        } 
     }
-    
 #ifdef VIESCHEDPP_LOG
         BOOST_LOG_TRIVIAL( info ) << "Finished validating station and baseline viability";
 #else
@@ -265,7 +246,6 @@ bool ModelBase::optimize(void) {
                 }
             }
         }
-
 #ifdef VIESCHEDPP_LOG
         BOOST_LOG_TRIVIAL( info ) << "Added " << count << " baseline activity variables to model";
 #else
@@ -326,8 +306,7 @@ next:;
             var.set(GRB_DoubleAttr_LB, val);
             var.set(GRB_DoubleAttr_UB, val);
         });
-        
-        
+
         // optimize the window
         this->prepare(tp, t0, tf, tn);
 
@@ -359,11 +338,11 @@ next:;
             return false;
         }
 
-    #ifdef VIESCHEDPP_LOG
+#ifdef VIESCHEDPP_LOG
         BOOST_LOG_TRIVIAL( info ) << "Completed optimization between " << t0 * blockLength_ << " and " << tf * blockLength_;
-    #else
+#else
         std::cout << "[info] Completed optimization between " << t0 * blockLength_ << " and " << tf * blockLength_;
-    #endif
+#endif
 
         // copy results back into solution
         for(size_t t : ModelBase::getBlocks(t0, tf)) {
@@ -390,6 +369,24 @@ next:;
             std::cout << dump;
         }
         dumps_.emplace_back(dump);
+
+        if(tp == t0) continue;
+        for(size_t t : ModelBase::getBlocks(tp, t0)) {
+            for(const auto q : ModelBase::getSources()) {
+                for(const Station& s : ModelBase::getStations(t, q)) {
+                    auto it = sol_.find(ModelKey::StaActive(this, q, s, t));
+                    if(it == sol_.end()) continue;
+                    if(it->second) continue;
+                    sol_.erase(it);
+                }
+                for(const Baseline& b : ModelBase::getBaselines(t, q)) {
+                    auto it = sol_.find(ModelKey::BlnActive(this, q, b, t));
+                    if(it == sol_.end()) continue;
+                    if(it->second) continue;
+                    sol_.erase(it);
+                }
+            }
+        }
     }
 
     for(const auto& dump : dumps_) {
@@ -405,6 +402,8 @@ next:;
 std::vector<Scan> ModelBase::optimize(std::vector<Scan>& scans) {
 #ifdef WITH_GUROBI
     ModelBase::loadScans(scans);
+    std::cout << "test" << std::endl;
+    std::flush(std::cout);
     if(!ModelBase::optimize()) return {};
     return ModelBase::readScans();
 #else // WITH_GUROBI
@@ -456,57 +455,18 @@ std::size_t ModelCoverage13::calculateCell(const ModelBase* model, size_t t,
 // helper implementations
 namespace VieVS {
 bool ModelBase::checkStationVisibility(size_t t, 
-    std::shared_ptr<const VieVS::AbstractSource> q, Station& s) const noexcept {
-    // make sure source is visible at this time
-    PointingVector pv0(s.getId(), q->getId());
-    pv0.setTime(t * blockLength_);
-    s.calcAzEl_rigorous( q, pv0);
-    return ModelBase::checkStationVisibility(t, q, s, pv0);
-}
-
-bool ModelBase::checkStationVisibility(size_t t, 
-    std::shared_ptr<const VieVS::AbstractSource> q, Station& s, const PointingVector& pv) const noexcept {
-    if(!s.isVisible(pv, q->getPARA().minElevation)) return false;
-    PointingVector pvf(s.getId(), q->getId());
-    pvf.setTime((t + 1) * blockLength_ - 1);
-    s.calcAzEl_rigorous( q, pvf);
-    return s.isVisible(pvf, q->getPARA().minElevation);
+    std::shared_ptr<const VieVS::AbstractSource> q, const Station& s) const noexcept {
+    auto key = ModelKey::StaActive(this, q, s, t);
+    return vis_.at(key);
 }
 
 bool ModelBase::checkBaselineViability(size_t t, std::shared_ptr<const VieVS::AbstractSource> q, 
     const Baseline& b) noexcept {
-    auto s1 = network_.getStation(b.getStaid1());
-    PointingVector pv1(s1.getId(), q->getId());
-    pv1.setTime(t * blockLength_);
-    s1.calcAzEl_rigorous( q, pv1);
-    auto s2 = network_.getStation(b.getStaid2());
-    PointingVector pv2(s2.getId(), q->getId());
-    pv2.setTime(t * blockLength_);
-    s2.calcAzEl_rigorous( q, pv2);
-    if(!ModelBase::checkStationVisibility(t, q, s1, pv1) || !ModelBase::checkStationVisibility(t, q, s2, pv2)) return false;
+    auto& s1 = network_.getStation(b.getStaid1());
+    auto& s2 = network_.getStation(b.getStaid2());
+    if(!ModelBase::checkStationVisibility(t, q, s1) || !ModelBase::checkStationVisibility(t, q, s2)) return false;
     size_t maxScan = (std::min(std::min(s1.getPARA().maxScan, s2.getPARA().maxScan), q->getPARA().maxScan) + blockLength_ - 1) / blockLength_;
-    return ModelBase::calculateMinObs(t, q, b, pv1, pv2) <= maxScan;
-}
-
-unsigned int ModelBase::calculateMinObsExact(unsigned int t,
-    const std::shared_ptr<const AbstractSource>& q,
-    const Baseline& b,
-    const std::shared_ptr<const Mode> &mode) {
-
-    unsigned long staid1 = b.getStaid1();
-    Station& sta1 = network_.refStation(staid1);
-    unsigned long staid2 = b.getStaid2();
-    Station& sta2 = network_.refStation( staid2 );
-    
-    PointingVector pv1(staid1, q->getId());
-    PointingVector pv2(staid2, q->getId());
-
-    pv1.setTime(t);
-    pv2.setTime(t);
-    sta1.calcAzEl_rigorous(q, pv1);
-    sta2.calcAzEl_rigorous(q, pv2);
-
-    return ModelBase::calculateMinObsExact(t, q, b, pv1, pv2, mode);
+    return ModelBase::calculateMinObs(t, q, b) <= maxScan;
 }
 
 unsigned int ModelBase::calculateMinObsExact(unsigned int t,
@@ -515,7 +475,7 @@ unsigned int ModelBase::calculateMinObsExact(unsigned int t,
     const PointingVector& pv1,
     const PointingVector& pv2,
     const std::shared_ptr<const Mode> &mode) {
-        boost::optional<unsigned int> fixedScanDuration = q->getPARA().fixedScanDuration;
+    boost::optional<unsigned int> fixedScanDuration = q->getPARA().fixedScanDuration;
     if(auto fixedScanDuration = q->getPARA().fixedScanDuration) {
         return *fixedScanDuration;
     }
@@ -604,43 +564,24 @@ size_t ModelBase::calculateMinObs(size_t t,
     const std::shared_ptr<const AbstractSource>& q,
     const Baseline& b) {
     const auto key = ModelKey::BlnActive(this, q, b, t);
-    size_t i = t / snr_block_count_;
+    unsigned long staid1 = b.getStaid1();
+    const Station& sta1 = network_.refStation(staid1);
+    unsigned long staid2 = b.getStaid2();
+    const Station& sta2 = network_.refStation( staid2 );
     {
-        auto it = snr_[i].find(key);
-        if(it != snr_[i].end()) return it->second;
+        auto it = snr_.find(key);
+        if(it != snr_.end()) return it->second;
     }
     size_t dur = std::numeric_limits<size_t>::max();
     for(auto& mode : modes_->getModes()) {
-        size_t maxDuration = (ModelBase::calculateMinObsExact(t * blockLength_, q, b, mode) + blockLength_ - 1) / blockLength_ - 1;
-        if(maxDuration > blockCount_) continue;
-        dur = std::min(dur, maxDuration);
-    }
-    {
-        snr_[i].emplace(key, dur);
-    }
-    return dur;
-}
-
-
-size_t ModelBase::calculateMinObs(size_t t,
-    const std::shared_ptr<const AbstractSource>& q,
-    const Baseline& b,
-    const PointingVector& pv1,
-    const PointingVector& pv2) {
-    const auto key = ModelKey::BlnActive(this, q, b, t);
-    size_t i = t / snr_block_count_;
-    {
-        auto it = snr_[i].find(key);
-        if(it != snr_[i].end()) return it->second;
-    }
-    size_t dur = std::numeric_limits<size_t>::max();
-    for(auto& mode : modes_->getModes()) {
+        const PointingVector& pv1 = pvs_.at(ModelKey::StaActive(this, q, sta1, t));
+        const PointingVector& pv2 = pvs_.at(ModelKey::StaActive(this, q, sta2, t));
         size_t maxDuration = (ModelBase::calculateMinObsExact(t * blockLength_, q, b, pv1, pv2, mode) + blockLength_ - 1) / blockLength_ - 1;
         if(maxDuration > blockCount_) continue;
         dur = std::min(dur, maxDuration);
     }
     {
-        snr_[i].emplace(key, dur);
+        snr_.emplace(key, dur);
     }
     return dur;
 }

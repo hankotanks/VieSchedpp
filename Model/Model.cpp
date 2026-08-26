@@ -46,9 +46,10 @@ void Model::prepare(size_t tp, size_t t0, size_t tf, size_t tn) {
     model_->set(GRB_IntAttr_ModelSense, GRB_MAXIMIZE);
 
     model_->setObjectiveN(Model::objSkyCov(), 0, 2);
+    model_->getMultiobjEnv(0).set(GRB_DoubleParam_TimeLimit, 600.0);
 
-    model_->setObjectiveN(Model::objBaselines(t0, tf), 1, 1);
-    model_->getMultiobjEnv(1).set(GRB_DoubleParam_TimeLimit, 1800.0);
+    // model_->setObjectiveN(Model::objBaselines(t0, tf), 1, 1);
+    // model_->getMultiobjEnv(1).set(GRB_DoubleParam_TimeLimit, 900.0);
 
 #ifdef VIESCHEDPP_LOG
         BOOST_LOG_TRIVIAL( info ) << "Finished building ILP model";
@@ -143,14 +144,14 @@ void Model::constrDuration(size_t tp, size_t t0, size_t tf, size_t tn) {
     size_t count = 0;
     for(Station& s : ModelBase::getStations()) {
         for(const auto q : ModelBase::getSources()) {
-            for(size_t t2 : ModelBase::getBlocks(tp, tn)) {
+            for(size_t t2 : ModelBase::getBlocks(t0, tn)) {
                 size_t maxScan = (std::min(q->getPARA().maxScan, s.getPARA().maxScan) + blockLength_ - 1) / blockLength_;
                 if(t2 < maxScan) continue;
                 // look backwards by minScan segments and forbid
                 GRBLinExpr lhs;
                 for(size_t k = 0; k <= maxScan; ++k) {
                     size_t t1 = t2 - k;
-                    if(t1 < tp) {
+                    if(t1 < t0) {
                         if(auto sol = getSol(ModelKey::StaActive(this, q, s, t1))) {
                             if(*sol) {
                                 --maxScan;

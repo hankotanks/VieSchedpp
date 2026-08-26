@@ -135,12 +135,7 @@ protected:
 protected:
     bool checkStationVisibility(size_t t, 
         std::shared_ptr<const VieVS::AbstractSource> q, 
-        Station& s) const noexcept;
-
-    bool checkStationVisibility(size_t t, 
-        std::shared_ptr<const VieVS::AbstractSource> q, 
-        Station& s,
-        const PointingVector& pv) const noexcept;
+        const Station& s) const noexcept;
 
     bool checkBaselineViability(size_t t, 
         std::shared_ptr<const VieVS::AbstractSource> q, 
@@ -166,11 +161,11 @@ protected:
         const std::shared_ptr<const AbstractSource>& q,
         const Baseline& b);
 
-    size_t calculateMinObs(size_t t,
-        const std::shared_ptr<const AbstractSource>& q,
-        const Baseline& b,
-        const PointingVector& pv1,
-        const PointingVector& pv2);
+    // size_t calculateMinObs(size_t t,
+    //     const std::shared_ptr<const AbstractSource>& q,
+    //     const Baseline& b,
+    //     const PointingVector& pv1,
+    //     const PointingVector& pv2);
 
     unsigned int calculateSlewTimeExact(Station& s, 
         const std::shared_ptr<const AbstractSource> q1, 
@@ -350,9 +345,10 @@ private:
     std::map<ModelKey, GRBVar> var_;
     std::map<ModelKey, bool> sol_;
     std::map<ModelKey, bool> cov_;
-    size_t snr_threads_;
-    size_t snr_block_count_;
-    std::vector<std::unordered_map<ModelKey, size_t, ModelKey::Hash>> snr_;
+    // size_t snr_block_count_;
+    std::unordered_map<ModelKey, PointingVector, ModelKey::Hash> pvs_;
+    std::unordered_map<ModelKey, bool, ModelKey::Hash> vis_;
+    std::unordered_map<ModelKey, size_t, ModelKey::Hash> snr_;
     std::map<unsigned long, size_t> sta2idx_;
     std::map<unsigned long, size_t> bln2idx_;
     std::map<unsigned long, size_t> src2idx_;
