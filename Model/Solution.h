@@ -274,6 +274,12 @@ public:
     std::vector<std::reference_wrapper<const Station>> getStations(size_t t, const std::shared_ptr<const AbstractSource>& q) const noexcept;
     
     /**
+     * @brief returns a baseline composed of two stations
+     * @author Hank Lewis
+     */
+    std::reference_wrapper<const Baseline> getBaseline(const Station& s1, const Station& s2) const noexcept;
+
+    /**
      * @brief returns all baselines
      * @author Hank Lewis
      */

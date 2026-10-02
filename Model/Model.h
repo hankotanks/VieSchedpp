@@ -61,7 +61,9 @@ public:
     Model(VieVS::Network& network, VieVS::SourceList& sourceList, 
         const std::set<unsigned long>& sourceMask, 
         const std::shared_ptr<const ObservingMode>& modes,
-        unsigned int blockLength, unsigned int windowLength) : ModelBase(network, sourceList, sourceMask, modes, blockLength, windowLength) { /* STUB */ }
+        unsigned int blockLength, unsigned int windowLength, std::map<std::string, std::pair<bool, unsigned int>>&& objectives) : 
+        ModelBase(network, sourceList, sourceMask, modes, blockLength, windowLength),
+        objectives_(objectives) { /* STUB */ }
 
     /**
      * @brief constructor with specified ModelCoverage implementation
@@ -77,7 +79,9 @@ public:
     Model(VieVS::Network& network, VieVS::SourceList& sourceList, 
         const std::set<unsigned long>& sourceMask, 
         const std::shared_ptr<const ObservingMode>& modes,
-        unsigned int blockLength, unsigned int windowLength) : ModelBase(network, sourceList, sourceMask, modes, blockLength, windowLength) {
+        unsigned int blockLength, unsigned int windowLength, std::map<std::string, std::pair<bool, unsigned int>>&& objectives) : 
+        ModelBase(network, sourceList, sourceMask, modes, blockLength, windowLength),
+        objectives_(objectives) {
         static_assert(std::is_base_of<ModelCoverage, T>::value, "unreachable");
         coverage_ = std::make_unique<T>();
     }
@@ -110,10 +114,22 @@ private:
     void constrBaseline(const Window& window);
 
     /**
+     * @brief ensure multiple baseline observations can't occur at the same time
+     * @author Hank Lewis
+    */
+    void constrBaselineExclusivity(const Window& window);
+
+    /**
      * @brief ensure minNumberOfSites is respected
      * @author Hank Lewis
     */
     void constrPairwise(const Window& window);
+
+    /**
+     * @brief ensure that if a station is active, at least one of its baselines is active
+     * @author Hank Lewis
+    */
+    void constrActivation(const Window& window);
 
     /**
      * @brief ensure max scan duration is respected
@@ -152,6 +168,8 @@ private:
     */
     GRBLinExpr objBaselines(const Window& window);
 #endif // WITH_GUROBI
+private:
+    std::map<std::string, std::pair<bool, unsigned int>> objectives_;
 };
 }
 #endif // MODEL_H

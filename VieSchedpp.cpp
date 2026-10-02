@@ -290,7 +290,7 @@ void VieSchedpp::run(void) {
 
             try {
                 bool ilp = false;
-                if( auto val = xml_.get_optional<bool>( "VieSchedpp.general.ilp" )) {
+                if( auto val = xml_.get_optional<bool>( "VieSchedpp.general.ilp.enabled" )) {
                     ilp = *val;
                 }
                 

@@ -49,12 +49,26 @@ namespace VieVS {
         
         try {
             unsigned int windowLength;
-            windowLength = xml_.get<unsigned int>( "VieSchedpp.general.ilpOptimizationWindow" );
+            windowLength = xml_.get<unsigned int>( "VieSchedpp.general.ilp.window" );
             if(windowLength < 3 * blockLength) {
                 throw std::runtime_error("Length of optimization window must be >= 3 times the minimum scan length");
             }
+            // get objective timeouts and enabled status
+            std::map<std::string, std::pair<bool, unsigned int>> objectives;
+            auto parent = xml_.get_child_optional("VieSchedpp.general.ilp.objectives");
+            if(parent) {
+                auto range = parent->equal_range("objective");
+                for(auto it = range.first; it != range.second; ++it) {
+                    const auto& objective = it->second;
+                    const auto name = objective.get<std::string>("name");
+                    const bool enabled = objective.get<bool>("enabled", true);
+                    const unsigned int timeout = objective.get<unsigned int>("timeout", 0);
+                    objectives[name] = {enabled, timeout};
+                }
+            }
             // initialize the model
-            model_ = new Model(network_, sourceList_, sourceMask, Scheduler::getObservingMode(), blockLength, windowLength);
+            model_ = new Model(network_, sourceList_, sourceMask, Scheduler::getObservingMode(), 
+                blockLength, windowLength, std::move(objectives));
         }
 #ifdef WITH_GUROBI 
         catch(GRBException& e) {

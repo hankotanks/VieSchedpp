@@ -333,6 +333,10 @@ std::vector<std::reference_wrapper<const Station>> Solution::getStations(size_t 
     return mask;
 }
 
+std::reference_wrapper<const Baseline> Solution::getBaseline(const Station& s1, const Station& s2) const noexcept {
+    return network_.getBaseline(std::make_pair(s1.getId(), s2.getId()));
+}
+
 std::vector<std::reference_wrapper<const Baseline>> Solution::getBaselines() const noexcept {
     std::vector<std::reference_wrapper<const Baseline>> mask;
     mask.reserve(bln_.size());

@@ -31,27 +31,49 @@ namespace VieVS {
 void Model::prepare(const Window& window) {
     Model::constrPairwise(window);
     Model::constrBaseline(window);
+    Model::constrBaselineExclusivity(window);
     Model::constrSlew(window);
+    Model::constrSNR(window);
     Model::constrDuration(window);
     Model::constrCoverage(window);
 
-#if 0
-    // NOTE: should be included in Model::constrSlew now
-    Model::constExclusive(t0, tf);
-#endif
-
-#if 1
-    // TODO: unfinished
-    Model::constrSNR(window);
-#endif
-
     model_->set(GRB_IntAttr_ModelSense, GRB_MAXIMIZE);
 
-    model_->setObjectiveN(Model::objSkyCov(window), 0, 2);
-    // model_->getMultiobjEnv(0).set(GRB_DoubleParam_TimeLimit, 600.0);
+    // sky coverage objective
+    if(objectives_.count("coverage") == 0 || objectives_["coverage"].first) {
+        model_->setObjectiveN(Model::objSkyCov(window), 0, 2);
+#ifdef VIESCHEDPP_LOG
+        BOOST_LOG_TRIVIAL( info ) << "Added coverage objective";
+#else
+        std::cout << "[info] Added coverage objective";
+#endif
+        if(objectives_["coverage"].second > 0) {
+            model_->getMultiobjEnv(0).set(GRB_DoubleParam_TimeLimit, objectives_["coverage"].second);
+#ifdef VIESCHEDPP_LOG
+        BOOST_LOG_TRIVIAL( info ) << "Set coverage objective's timeout to " << objectives_["coverage"].second << " seconds";
+#else
+        std::cout << "[info] Set coverage objective's timeout to " << objectives_["coverage"].second << " seconds";
+#endif
+        }
+    }
 
-    model_->setObjectiveN(Model::objBaselines(window), 1, 1);
-    model_->getMultiobjEnv(1).set(GRB_DoubleParam_TimeLimit, 300.0);
+    // baseline objective
+    if(objectives_.count("baseline") == 0 || objectives_["baseline"].first) {
+        model_->setObjectiveN(Model::objBaselines(window), 1, 1);
+#ifdef VIESCHEDPP_LOG
+        BOOST_LOG_TRIVIAL( info ) << "Added baseline objective";
+#else
+        std::cout << "[info] Added baseline objective";
+#endif
+        if(objectives_["baseline"].second > 0) {
+            model_->getMultiobjEnv(1).set(GRB_DoubleParam_TimeLimit, objectives_["baseline"].second);
+#ifdef VIESCHEDPP_LOG
+        BOOST_LOG_TRIVIAL( info ) << "Set baseline objective's timeout to " << objectives_["baseline"].second << " seconds";
+#else
+        std::cout << "[info] Set baseline objective's timeout to " << objectives_["baseline"].second << " seconds";
+#endif
+        }
+    }
 
 #ifdef VIESCHEDPP_LOG
         BOOST_LOG_TRIVIAL( info ) << "Finished building ILP model";
@@ -113,6 +135,31 @@ void Model::constrBaseline(const Window& window) {
 #endif
 }
 
+void Model::constrBaselineExclusivity(const Window& window) {
+    // b can only observe one q at time t
+    size_t count = 0;
+    for(size_t t : sol_.getBlocks(window.t0, window.tf)) {
+        for(const Baseline& b : sol_.getBaselines()) {
+            GRBLinExpr lhs;
+            size_t lhsCount = 0;
+            for(const auto q : sol_.getSources(t, b)) {
+                lhs += *getVar(Solution::Key::BlnActive(&sol_, q, b, t));
+                lhsCount++;
+            }
+            if(lhsCount > 0) {
+                model_->addConstr(lhs <= 1, "constr_baseline_exclusive[" + b.getName() + ", " + std::to_string(t) + "]");
+                count++;
+            }
+        }
+    }
+
+#ifdef VIESCHEDPP_LOG
+    BOOST_LOG_TRIVIAL( info ) << "Added " << count << " baseline observation exclusivity constraints to model";
+#else
+    std::cout << "[info] Added " << count << " baseline observation exclusivity constraints to model";
+#endif
+}
+
 void Model::constrPairwise(const Window& window) {
     // if s is observing q at t,
     // >= other station must be active for the same q, t
@@ -129,7 +176,7 @@ void Model::constrPairwise(const Window& window) {
                     rhsCount++;
                 }
                 if(rhsCount > 0) {
-                    model_->addConstr(rhs >= std::max(static_cast<unsigned int>(2), q->getPARA().minNumberOfSites - 1) * lhs, "constr_pairwise[" + s1.getName() + ", " + q->getName() + ", " + std::to_string(t) + "]");
+                    model_->addConstr(rhs >= (q->getPARA().minNumberOfSites - 1) * lhs, "constr_pairwise[" + s1.getName() + ", " + q->getName() + ", " + std::to_string(t) + "]");
                     count++;
                 }
             }
@@ -242,89 +289,6 @@ void Model::constrSlew(const Window& window) {
 #else
     std::cout << "[info] Added " << count << " slew constraints to model";
 #endif
-
-    if(window.t0 > window.tp) {
-        count = 0;
-        for(const Station& s : sol_.getStations()) {
-            for(const auto q1 : sol_.getSources()) { // starting
-                for(const auto q2 : sol_.getSources()) { // ending
-                    if(q1->getId() == q2->getId()) continue;
-                    auto key_to = Solution::Key::StaActive(&sol_, q2, s, window.t0);
-                    for(size_t t1 : sol_.getBlocks(window.tp, window.t0, q1, s)) { // starting
-                        auto key_from = Solution::Key::StaActive(&sol_, q1, s, t1);
-                        if(*sol_.getSol(key_from)) {
-                            // check if any slew windows extend into the active optimization window
-                            size_t t_slew = sol_.getSlew(key_from, key_to);
-                            if(t1 + t_slew >= window.t0) {
-                                for(size_t t2 : sol_.getBlocks(window.t0, t1 + t_slew + 1, q2, s)) { // ending
-                                    auto var = *getVar(Solution::Key::StaActive(&sol_, q2, s, t2));
-                                    if(var.get(GRB_DoubleAttr_Start) > 0.5) {
-#ifdef VIESCHEDPP_LOG
-                                        BOOST_LOG_TRIVIAL( info ) << "Forbade " << q2->getName() << " by " << s.getName() << " at " << t2 << "during the backward slew violation check, but it was set to 1 by warm-start";
-#else
-                                        std::cout << "[info] Forbade " << q2->getName() << " by " << s.getName() << " at " << t2 << "during the backward slew violation check, but it was set to 1 by warm-start";
-#endif
-                                    }
-                                    var.set(GRB_DoubleAttr_LB, 0.0);
-                                    var.set(GRB_DoubleAttr_UB, 0.0);
-                                    ++count;
-                                }
-                                goto next_backward;
-                            }
-                        }
-                    }
-next_backward:;
-                }
-            }
-        }
-#ifdef VIESCHEDPP_LOG
-        BOOST_LOG_TRIVIAL( info ) << "Forbade " << count << " potential observations due to backward slew violations";
-#else
-        std::cout << "[info] Forbade " << count << " potential observations due to backward slew violations";
-#endif
-    }
-    
-    if(window.tf < window.tn) {
-        count = 0;
-        for(const Station& s : sol_.getStations()) {
-            for(const auto q1 : sol_.getSources()) { // ending
-                for(const auto q2 : sol_.getSources()) { // starting
-                    if(q1->getId() == q2->getId()) continue;
-                    auto key_from = Solution::Key::StaActive(&sol_, q2, s, window.tf);
-                    for(size_t t1 : sol_.getBlocks(window.tf, window.tn, q1, s)) { // ending
-                        auto key_to = Solution::Key::StaActive(&sol_, q1, s, t1);
-                        if(*sol_.getSol(key_to)) {
-                            // check if any slew windows extend into the active optimization window
-                            size_t t_slew = sol_.getSlew(key_from, key_to);
-                            if(t1 - t_slew < window.tf) {
-                                // force these variables to 0
-                                for(size_t t2 : sol_.getBlocks(t1 - t_slew, window.tf, q2, s)) {
-                                    auto var = *getVar(Solution::Key::StaActive(&sol_, q2, s, t2));
-                                    if(var.get(GRB_DoubleAttr_Start) > 0.5) {
-#ifdef VIESCHEDPP_LOG
-                                        BOOST_LOG_TRIVIAL( info ) << "Forbade " << q2->getName() << " by " << s.getName() << " at " << t2 << "during the forward slew violation check, but it was set to 1 by warm-start";
-#else
-                                        std::cout << "[info] Forbade " << q2->getName() << " by " << s.getName() << " at " << t2 << "during the forward slew violation check, but it was set to 1 by warm-start";
-#endif
-                                    }
-                                    var.set(GRB_DoubleAttr_LB, 0.0);
-                                    var.set(GRB_DoubleAttr_UB, 0.0);
-                                    count++;
-                                }
-                                goto next_forward;
-                            }
-                        }
-                    }
-next_forward:;
-                }
-            }
-        }
-#ifdef VIESCHEDPP_LOG
-        BOOST_LOG_TRIVIAL( info ) << "Forbade " << count << " potential observations due to forward slew violations";
-#else
-        std::cout << "[info] Forbade " << count << " potential observations due to forward slew violations";
-#endif
-    }
 }
 
 void Model::constrCoverage(const Window& window) {
@@ -406,6 +370,8 @@ GRBLinExpr Model::objBaselines(const Window& window) {
             }
         }
     }
+
+    // model_->addConstr(obj <= 1.0, "obj_ub");
 
     return obj;
 }

@@ -156,6 +156,70 @@ bool ModelBase::optimize(void) {
         std::cout << "[info] Added " << count << " BlnActive variables to model";
 #endif
 
+        if(t0 > tp) {
+            for(const Station& s : sol_.getStations()) {
+                for(const auto q1 : sol_.getSources()) { // starting
+                    for(const auto q2 : sol_.getSources()) { // ending
+                        if(q1->getId() == q2->getId()) continue;
+                        auto key_to = Solution::Key::StaActive(&sol_, q2, s, t0);
+                        for(size_t t1 : sol_.getBlocks(tp, t0, q1, s)) { // starting
+                            auto key_from = Solution::Key::StaActive(&sol_, q1, s, t1);
+                            if(*sol_.getSol(key_from)) {
+                                // check if any slew windows extend into the active optimization window
+                                size_t t_slew = sol_.getSlew(key_from, key_to);
+                                if(t1 + t_slew >= t0) {
+                                    for(size_t t2 : sol_.getBlocks(t0, t1 + t_slew + 1, q2, s)) { // ending
+                                        Solution::Key key = Solution::Key::StaActive(&sol_, q2, s, t2);
+                                        if(auto sol = sol_.getSol(key)) *sol = false;
+                                        auto var = *getVar(key);
+                                        var.set(GRB_DoubleAttr_LB, 0.0);
+                                        var.set(GRB_DoubleAttr_UB, 0.0);
+                                    }
+                                    goto next_backward;
+                                }
+                            }
+                        }
+next_backward:;
+                    }
+                }
+            }
+        }
+        
+        if(tf < tn) {
+            for(const Station& s : sol_.getStations()) {
+                for(const auto q1 : sol_.getSources()) { // ending
+                    for(const auto q2 : sol_.getSources()) { // starting
+                        if(q1->getId() == q2->getId()) continue;
+                        auto key_from = Solution::Key::StaActive(&sol_, q2, s, tf);
+                        for(size_t t1 : sol_.getBlocks(tf, tn, q1, s)) { // ending
+                            auto key_to = Solution::Key::StaActive(&sol_, q1, s, t1);
+                            if(*sol_.getSol(key_to)) {
+                                // check if any slew windows extend into the active optimization window
+                                size_t t_slew = sol_.getSlew(key_from, key_to);
+                                if(t1 - t_slew < tf) {
+                                    // force these variables to 0
+                                    for(size_t t2 : sol_.getBlocks(t1 - t_slew, tf, q2, s)) {
+                                        Solution::Key key = Solution::Key::StaActive(&sol_, q2, s, t2);
+                                        if(auto sol = sol_.getSol(key)) *sol = false;
+                                        auto var = *getVar(key);
+                                        var.set(GRB_DoubleAttr_LB, 0.0);
+                                        var.set(GRB_DoubleAttr_UB, 0.0);
+                                    }
+                                    goto next_forward;
+                                }
+                            }
+                        }
+    next_forward:;
+                    }
+                }
+            }
+    #ifdef VIESCHEDPP_LOG
+            BOOST_LOG_TRIVIAL( info ) << "Forbade " << count << " potential observations due to forward slew violations";
+    #else
+            std::cout << "[info] Forbade " << count << " potential observations due to forward slew violations";
+    #endif
+        }
+
         // StaCoverage
         count = 0;
         for(const Station& s : sol_.getStations()) {
