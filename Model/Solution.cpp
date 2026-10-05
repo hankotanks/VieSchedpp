@@ -272,6 +272,8 @@ size_t Solution::getSlew(const Key& from, const Key& to) const noexcept {
     const PointingVector& pv2 = it2->second;
     const Station& s = network_.getStation(idx2sta_.at(from.key.sta_active.s));
     unsigned int t_slew = s.getAntenna().slewTime(pv1, pv2);
+    if(t_slew < s.getPARA().minSlewtimeDataWriteRate) t_slew = s.getPARA().minSlewtimeDataWriteRate;
+    if(t_slew < s.getPARA().minSlewtime) t_slew = s.getPARA().minSlewtime;
     unsigned int t_const = s.getPARA().systemDelay + s.getPARA().preob;
     return (t_slew + t_const + blockLength_ - 1) / blockLength_;
 }
