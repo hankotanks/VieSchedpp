@@ -156,7 +156,6 @@ bool ModelBase::optimize(void) {
         std::cout << "[info] Added " << count << " BlnActive variables to model";
 #endif
 
-#if 0
         if(t0 > tp) {
             for(const Station& s : sol_.getStations()) {
                 for(const auto q1 : sol_.getSources()) { // starting
@@ -215,7 +214,6 @@ next_forward:;
                 }
             }
         }
-#endif
 
         // StaCoverage
         count = 0;
