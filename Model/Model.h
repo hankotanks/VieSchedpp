@@ -61,8 +61,10 @@ public:
     Model(VieVS::Network& network, VieVS::SourceList& sourceList, 
         const std::set<unsigned long>& sourceMask, 
         const std::shared_ptr<const ObservingMode>& modes,
-        unsigned int blockLength, unsigned int windowLength, std::map<std::string, std::pair<bool, unsigned int>>&& objectives) : 
+        unsigned int blockLength, unsigned int windowLength, bool windowSourceRestriction, 
+        std::map<std::string, std::pair<bool, unsigned int>>&& objectives) : 
         ModelBase(network, sourceList, sourceMask, modes, blockLength, windowLength),
+        windowSourceRestriction_(windowSourceRestriction),
         objectives_(objectives) { /* STUB */ }
 
     /**
@@ -79,7 +81,8 @@ public:
     Model(VieVS::Network& network, VieVS::SourceList& sourceList, 
         const std::set<unsigned long>& sourceMask, 
         const std::shared_ptr<const ObservingMode>& modes,
-        unsigned int blockLength, unsigned int windowLength, std::map<std::string, std::pair<bool, unsigned int>>&& objectives) : 
+        unsigned int blockLength, unsigned int windowLength, bool windowSourceRestriction, 
+        std::map<std::string, std::pair<bool, unsigned int>>&& objectives) : 
         ModelBase(network, sourceList, sourceMask, modes, blockLength, windowLength),
         objectives_(objectives) {
         static_assert(std::is_base_of<ModelCoverage, T>::value, "unreachable");
@@ -105,70 +108,71 @@ private:
      * @brief ensure no station makes two concurrent observations
      * @author Hank Lewis
     */
-    void constrExclusive(const Window& window);
+    void constrExclusive(const Window& window, const std::set<unsigned long>& sourceSubMask);
 
     /**
      * @brief ensure StaActive is tied to BlnActive
      * @author Hank Lewis
     */
-    void constrBaseline(const Window& window);
+    void constrBaseline(const Window& window, const std::set<unsigned long>& sourceSubMask);
 
     /**
      * @brief ensure multiple baseline observations can't occur at the same time
      * @author Hank Lewis
     */
-    void constrBaselineExclusivity(const Window& window);
+    void constrBaselineExclusivity(const Window& window, const std::set<unsigned long>& sourceSubMask);
 
     /**
      * @brief ensure minNumberOfSites is respected
      * @author Hank Lewis
     */
-    void constrPairwise(const Window& window);
+    void constrPairwise(const Window& window, const std::set<unsigned long>& sourceSubMask);
 
     /**
      * @brief ensure that if a station is active, at least one of its baselines is active
      * @author Hank Lewis
     */
-    void constrActivation(const Window& window);
+    void constrActivation(const Window& window, const std::set<unsigned long>& sourceSubMask);
 
     /**
      * @brief ensure max scan duration is respected
      * @author Hank Lewis
     */
-    void constrDuration(const Window& window);
+    void constrDuration(const Window& window, const std::set<unsigned long>& sourceSubMask);
 
     /**
      * @brief ensure sufficient time for observations
      * @author Hank Lewis
     */
-    void constrSNR(const Window& window);
+    void constrSNR(const Window& window, const std::set<unsigned long>& sourceSubMask);
 
     /**
      * @brief ensure enough time to slew between observations
      * @author Hank Lewis
     */
-    void constrSlew(const Window& window);
+    void constrSlew(const Window& window, const std::set<unsigned long>& sourceSubMask);
 
     /**
      * @brief ensure StaCoverage tied to StaActive
      * @author Hank Lewis
     */
-    void constrCoverage(const Window& window);
+    void constrCoverage(const Window& window, const std::set<unsigned long>& sourceSubMask);
 
 private:
     /**
      * @brief sky coverage objected
      * @author Hank Lewis
     */
-    GRBLinExpr objSkyCov(const Window& window);
+    GRBLinExpr objSkyCov(const Window& window, const std::set<unsigned long>& sourceSubMask);
 
     /**
      * @brief baseline objective, weighted by baseline length
      * @author Hank Lewis
     */
-    GRBLinExpr objBaselines(const Window& window);
+    GRBLinExpr objBaselines(const Window& window, const std::set<unsigned long>& sourceSubMask);
 #endif // WITH_GUROBI
 private:
+    bool windowSourceRestriction_;
     std::map<std::string, std::pair<bool, unsigned int>> objectives_;
 };
 }

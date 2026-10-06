@@ -53,6 +53,7 @@ namespace VieVS {
             if(windowLength < 3 * blockLength) {
                 throw std::runtime_error("Length of optimization window must be >= 3 times the minimum scan length");
             }
+            bool windowSourceRestriction = xml_.get<bool>( "VieSchedpp.general.ilp.windowSourceRestriction", false );
             // get objective timeouts and enabled status
             std::map<std::string, std::pair<bool, unsigned int>> objectives;
             auto parent = xml_.get_child_optional("VieSchedpp.general.ilp.objectives");
@@ -68,7 +69,7 @@ namespace VieVS {
             }
             // initialize the model
             model_ = new Model(network_, sourceList_, sourceMask, Scheduler::getObservingMode(), 
-                blockLength, windowLength, std::move(objectives));
+                blockLength, windowLength, windowSourceRestriction, std::move(objectives));
         }
 #ifdef WITH_GUROBI 
         catch(GRBException& e) {

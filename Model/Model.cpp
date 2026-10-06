@@ -29,19 +29,40 @@
 
 namespace VieVS {
 void Model::prepare(const Window& window) {
-    Model::constrPairwise(window);
-    Model::constrBaseline(window);
-    Model::constrBaselineExclusivity(window);
-    Model::constrSlew(window);
-    Model::constrSNR(window);
-    Model::constrDuration(window);
-    Model::constrCoverage(window);
+    // build source submask if windowSourceRestriction enabled
+    std::set<unsigned long> sourceSubMask;
+    if(windowSourceRestriction_) {
+        for(size_t t : sol_.getBlocks(window.t0, window.tn)) {
+            for(const Station& s : sol_.getStations()) {
+                for(const auto q : sol_.getSources(t, s)) {
+                    if(*sol_.getSol(Solution::Key::StaActive(&sol_, q, s, t))) {
+                        sourceSubMask.insert(q->getId());
+                    }
+                }
+            }
+        }
+#ifdef VIESCHEDPP_LOG
+        BOOST_LOG_TRIVIAL( info ) << "Restricted window source list to " << sourceSubMask.size() << " due to windowSourceRestriction = true";
+#else
+        std::cout << "[info] Restricted window source list to " << sourceSubMask.size() << " due to windowSourceRestriction = true";
+#endif
+    }
+
+    // add constraints
+    Model::constrExclusive(window, sourceSubMask);
+    Model::constrPairwise(window, sourceSubMask);
+    Model::constrBaseline(window, sourceSubMask);
+    Model::constrBaselineExclusivity(window, sourceSubMask);
+    Model::constrSlew(window, sourceSubMask);
+    Model::constrSNR(window, sourceSubMask);
+    Model::constrDuration(window, sourceSubMask);
+    Model::constrCoverage(window, sourceSubMask);
 
     model_->set(GRB_IntAttr_ModelSense, GRB_MAXIMIZE);
 
     // sky coverage objective
     if(objectives_.count("coverage") == 0 || objectives_["coverage"].first) {
-        model_->setObjectiveN(Model::objSkyCov(window), 0, 2);
+        model_->setObjectiveN(Model::objSkyCov(window, sourceSubMask), 0, 2);
 #ifdef VIESCHEDPP_LOG
         BOOST_LOG_TRIVIAL( info ) << "Added coverage objective";
 #else
@@ -59,7 +80,7 @@ void Model::prepare(const Window& window) {
 
     // baseline objective
     if(objectives_.count("baseline") == 0 || objectives_["baseline"].first) {
-        model_->setObjectiveN(Model::objBaselines(window), 1, 1);
+        model_->setObjectiveN(Model::objBaselines(window, sourceSubMask), 1, 1);
 #ifdef VIESCHEDPP_LOG
         BOOST_LOG_TRIVIAL( info ) << "Added baseline objective";
 #else
@@ -83,7 +104,7 @@ void Model::prepare(const Window& window) {
 }
 
 #ifdef WITH_GUROBI
-void Model::constrExclusive(const Window& window) {
+void Model::constrExclusive(const Window& window, const std::set<unsigned long>& sourceSubMask) {
     // s can only observe one q at time t
     size_t count = 0;
     for(size_t t : sol_.getBlocks(window.t0, window.tf)) {
@@ -91,6 +112,7 @@ void Model::constrExclusive(const Window& window) {
             GRBLinExpr lhs;
             size_t lhsCount = 0;
             for(const auto q : sol_.getSources(t, s)) {
+                if(!sourceSubMask.empty() && sourceSubMask.count(q->getId()) == 0) continue;
                 lhs += *getVar(Solution::Key::StaActive(&sol_, q, s, t));
                 lhsCount++;
             }
@@ -108,11 +130,12 @@ void Model::constrExclusive(const Window& window) {
 #endif
 }
 
-void Model::constrBaseline(const Window& window) {
+void Model::constrBaseline(const Window& window, const std::set<unsigned long>& sourceSubMask) {
     // if <s1, s2> is active at t, both must observe q at t
     size_t count = 0;
     for(size_t t : sol_.getBlocks(window.t0, window.tf)) {
         for(const auto q : sol_.getSources()) {
+            if(!sourceSubMask.empty() && sourceSubMask.count(q->getId()) == 0) continue;
             for(const Baseline& b : sol_.getBaselines(t, q)) {
                 auto s = sol_.getStations(b);
                 const Station& s1 = s.first;
@@ -135,7 +158,7 @@ void Model::constrBaseline(const Window& window) {
 #endif
 }
 
-void Model::constrBaselineExclusivity(const Window& window) {
+void Model::constrBaselineExclusivity(const Window& window, const std::set<unsigned long>& sourceSubMask) {
     // b can only observe one q at time t
     size_t count = 0;
     for(size_t t : sol_.getBlocks(window.t0, window.tf)) {
@@ -143,6 +166,7 @@ void Model::constrBaselineExclusivity(const Window& window) {
             GRBLinExpr lhs;
             size_t lhsCount = 0;
             for(const auto q : sol_.getSources(t, b)) {
+                if(!sourceSubMask.empty() && sourceSubMask.count(q->getId()) == 0) continue;
                 lhs += *getVar(Solution::Key::BlnActive(&sol_, q, b, t));
                 lhsCount++;
             }
@@ -160,12 +184,13 @@ void Model::constrBaselineExclusivity(const Window& window) {
 #endif
 }
 
-void Model::constrPairwise(const Window& window) {
+void Model::constrPairwise(const Window& window, const std::set<unsigned long>& sourceSubMask) {
     // if s is observing q at t,
-    // >= other station must be active for the same q, t
+    // >= N-1 other station must be active for the same q, t
     size_t count = 0;
     for(size_t t : sol_.getBlocks(window.t0, window.tf)) {
         for(const auto q : sol_.getSources()) {
+            if(!sourceSubMask.empty() && sourceSubMask.count(q->getId()) == 0) continue;
             for(const Station& s1 : sol_.getStations(t, q)) {
                 GRBVar lhs = *getVar(Solution::Key::StaActive(&sol_, q, s1, t));
                 GRBLinExpr rhs;
@@ -190,10 +215,11 @@ void Model::constrPairwise(const Window& window) {
 #endif
 }
 
-void Model::constrDuration(const Window& window) {
+void Model::constrDuration(const Window& window, const std::set<unsigned long>& sourceSubMask) {
     size_t count = 0;
     for(const Station& s : sol_.getStations()) {
         for(const auto q : sol_.getSources()) {
+            if(!sourceSubMask.empty() && sourceSubMask.count(q->getId()) == 0) continue;
             for(size_t t2 : sol_.getBlocks(window.t0, window.tn)) {
                 size_t maxScan = sol_.getBlocks(std::min(q->getPARA().maxScan, s.getPARA().maxScan));
                 if(t2 < maxScan) continue;
@@ -223,7 +249,7 @@ void Model::constrDuration(const Window& window) {
 #endif
 }
 
-void Model::constrSNR(const Window& window) {
+void Model::constrSNR(const Window& window, const std::set<unsigned long>& sourceSubMask) {
     size_t count = 0;
     auto add = [this](GRBLinExpr& expr, const Solution::Key& key) {
         if(auto var = this->getVar(key)) {
@@ -235,6 +261,7 @@ void Model::constrSNR(const Window& window) {
     };
 
     for(const auto q : sol_.getSources()) {
+        if(!sourceSubMask.empty() && sourceSubMask.count(q->getId()) == 0) continue;
         for(const Baseline& b : sol_.getBaselines()) {
             auto s = sol_.getStations(b);
             const Station& s1 = s.first;
@@ -261,17 +288,19 @@ void Model::constrSNR(const Window& window) {
 #endif
 }
 
-void Model::constrSlew(const Window& window) {
+void Model::constrSlew(const Window& window, const std::set<unsigned long>& sourceSubMask) {
     // there must be sufficient time in [t1, t2) for s to slew between q1, q2
     size_t count = 0;
     for(const Station& s : sol_.getStations()) {
         for(const auto q1 : sol_.getSources()) {
+            if(!sourceSubMask.empty() && sourceSubMask.count(q1->getId()) == 0) continue;
             for(size_t t1 : sol_.getBlocks(window.tp, window.tf, q1, s)) {
                 auto key_from = Solution::Key::StaActive(&sol_, q1, s, t1);
                 auto lhs = *getVar(key_from);
                 GRBLinExpr rhs;
                 for(const auto q2 : sol_.getSources()) {
                     if(q1->getId() == q2->getId()) continue;
+                    if(!sourceSubMask.empty() && sourceSubMask.count(q2->getId()) == 0) continue;
                     for(size_t t2 : sol_.getBlocks(t1, window.tn, q2, s)) {
                         auto key_to = Solution::Key::StaActive(&sol_, q2, s, t2);
                         size_t t_slew = sol_.getSlew(key_from, key_to);
@@ -291,7 +320,7 @@ void Model::constrSlew(const Window& window) {
 #endif
 }
 
-void Model::constrCoverage(const Window& window) {
+void Model::constrCoverage(const Window& window, const std::set<unsigned long>& sourceSubMask) {
     // c is 'hit' if >= observations occurred over schedule duration
     size_t count = 0;
     for(const Station& s : sol_.getStations()) {
@@ -301,6 +330,7 @@ void Model::constrCoverage(const Window& window) {
             size_t rhsCount = 0;
             for(size_t t : sol_.getBlocks(window.t0, window.tf)) {
                 for(const auto q : sol_.getSources(t, s)) {
+                    if(!sourceSubMask.empty() && sourceSubMask.count(q->getId()) == 0) continue;
                     auto pv = sol_.getPointingVector(Solution::Key::StaActive(&sol_, q, s, t));
                     if(coverage_->calculateCell(*pv) != c) continue;
                     rhs += *getVar(Solution::Key::StaActive(&sol_, q, s, t));
@@ -321,7 +351,7 @@ void Model::constrCoverage(const Window& window) {
 #endif
 }
 
-GRBLinExpr Model::objSkyCov(const Window& window) {
+GRBLinExpr Model::objSkyCov(const Window& window, const std::set<unsigned long>& sourceSubMask) {
     auto sta = sol_.getStations();
     // coverage objective
     GRBLinExpr obj;
@@ -335,7 +365,7 @@ GRBLinExpr Model::objSkyCov(const Window& window) {
     return obj;
 }
 
-GRBLinExpr Model::objBaselines(const Window& window) {
+GRBLinExpr Model::objBaselines(const Window& window, const std::set<unsigned long>& sourceSubMask) {
     // baseline occurrence
     std::map<unsigned long, double> bLength;
     for(const Baseline& b : sol_.getBaselines()) {
@@ -366,12 +396,11 @@ GRBLinExpr Model::objBaselines(const Window& window) {
         co /= static_cast<double>(window.tf - window.t0);
         for(size_t t : sol_.getBlocks(window.t0, window.tf)) {
             for(const auto q : sol_.getSources(t, b)) {
+                if(!sourceSubMask.empty() && sourceSubMask.count(q->getId()) == 0) continue;
                 obj += *getVar(Solution::Key::BlnActive(&sol_, q, b, t)) * co;
             }
         }
     }
-
-    // model_->addConstr(obj <= 1.0, "obj_ub");
 
     return obj;
 }
