@@ -21,6 +21,7 @@
 // system
 #include <memory>
 #include <numeric>
+#include "gurobi_c.h"
 
 // gurobi
 #ifdef WITH_GUROBI
@@ -28,7 +29,7 @@
 #endif // WITH_GUROBI
 
 namespace VieVS {
-void Model::prepare(const Window& window) {
+std::vector<std::tuple<std::string, GRBLinExpr, int, unsigned int>> Model::prepare(const Window& window) {
     // build source submask if windowSourceRestriction enabled
     std::set<unsigned long> sourceSubMask;
     if(windowSourceRestriction_) {
@@ -52,7 +53,7 @@ void Model::prepare(const Window& window) {
     Model::constrExclusive(window, sourceSubMask);
     Model::constrPairwise(window, sourceSubMask);
     Model::constrBaseline(window, sourceSubMask);
-    Model::constrBaselineExclusivity(window, sourceSubMask);
+    // Model::constrBaselineExclusivity(window, sourceSubMask);
     Model::constrSlew(window, sourceSubMask);
     Model::constrSNR(window, sourceSubMask);
     Model::constrDuration(window, sourceSubMask);
@@ -61,39 +62,24 @@ void Model::prepare(const Window& window) {
     model_->set(GRB_IntAttr_ModelSense, GRB_MAXIMIZE);
 
     // sky coverage objective
+    std::vector<std::tuple<std::string, GRBLinExpr, int, unsigned int>> obj;
     if(objectives_.count("coverage") == 0 || objectives_["coverage"].first) {
-        model_->setObjectiveN(Model::objSkyCov(window, sourceSubMask), 0, 2);
+        obj.emplace_back("coverage", Model::objSkyCov(window, sourceSubMask), GRB_MAXIMIZE, objectives_["coverage"].second);
 #ifdef VIESCHEDPP_LOG
         BOOST_LOG_TRIVIAL( info ) << "Added coverage objective";
 #else
         std::cout << "[info] Added coverage objective";
 #endif
-        if(objectives_["coverage"].second > 0) {
-            model_->getMultiobjEnv(0).set(GRB_DoubleParam_TimeLimit, objectives_["coverage"].second);
-#ifdef VIESCHEDPP_LOG
-        BOOST_LOG_TRIVIAL( info ) << "Set coverage objective's timeout to " << objectives_["coverage"].second << " seconds";
-#else
-        std::cout << "[info] Set coverage objective's timeout to " << objectives_["coverage"].second << " seconds";
-#endif
-        }
     }
 
     // baseline objective
     if(objectives_.count("baseline") == 0 || objectives_["baseline"].first) {
-        model_->setObjectiveN(Model::objBaselines(window, sourceSubMask), 1, 1);
+        obj.emplace_back("baseline", Model::objBaselines(window, sourceSubMask), GRB_MAXIMIZE, objectives_["baseline"].second);
 #ifdef VIESCHEDPP_LOG
         BOOST_LOG_TRIVIAL( info ) << "Added baseline objective";
 #else
         std::cout << "[info] Added baseline objective";
 #endif
-        if(objectives_["baseline"].second > 0) {
-            model_->getMultiobjEnv(1).set(GRB_DoubleParam_TimeLimit, objectives_["baseline"].second);
-#ifdef VIESCHEDPP_LOG
-        BOOST_LOG_TRIVIAL( info ) << "Set baseline objective's timeout to " << objectives_["baseline"].second << " seconds";
-#else
-        std::cout << "[info] Set baseline objective's timeout to " << objectives_["baseline"].second << " seconds";
-#endif
-        }
     }
 
 #ifdef VIESCHEDPP_LOG
@@ -101,6 +87,7 @@ void Model::prepare(const Window& window) {
 #else
         std::cout << "[info] Finished building ILP model";
 #endif
+    return obj;
 }
 
 #ifdef WITH_GUROBI
@@ -128,6 +115,48 @@ void Model::constrExclusive(const Window& window, const std::set<unsigned long>&
 #else
     std::cout << "[info] Added " << count << " observation exclusivity constraints to model";
 #endif
+}
+
+void Model::post(const Window& window, const std::string& name) {
+    if(name == "baseline") {
+        std::set<unsigned int> sources;
+        for(const auto q : sol_.getSources()) {
+            for(size_t t : sol_.getBlocks(window.t0, window.tf)) {
+                for(const Station& s : sol_.getStations(t, q)) {
+                    if(getVar(Solution::Key::StaActive(&sol_, q, s, t))->get(GRB_DoubleAttr_X) > 0.5) {
+                        sources.insert(q->getId());
+                        goto next;
+                    }
+                }
+            }
+next:;
+        }
+        // freeze all variables related to sources not present in the original solve
+        for(const auto q : sol_.getSources()) {
+            if(sources.count(q->getId()) != 0) continue;
+            for(size_t t : sol_.getBlocks(window.t0, window.tf)) {
+                for(const Station& s : sol_.getStations(t, q)) {
+                    auto var = getVar(Solution::Key::StaActive(&sol_, q, s, t));
+                    var->set(GRB_DoubleAttr_LB, 0.0);
+                    var->set(GRB_DoubleAttr_UB, 0.0);
+                }
+                for(const Baseline& b : sol_.getBaselines(t, q)) {
+                    auto var = getVar(Solution::Key::BlnActive(&sol_, q, b, t));
+                    var->set(GRB_DoubleAttr_LB, 0.0);
+                    var->set(GRB_DoubleAttr_UB, 0.0);
+                }
+            }
+        }
+        // manually calculate the baseline objective, because Gurobi is very stupid
+        // double sum = 0.0;
+        // GRBLinExpr expr = Model::objBaselines(window, {});
+        // for(int i = 0; i < expr.size(); i++) {
+        //     double var = expr.getVar(i).get(GRB_DoubleAttr_X);
+        //     double coeff = expr.getCoeff(i);
+        //     if(var > 0.5) sum += coeff * var;
+        // }
+        // model_->set(GRB_DoubleAttr_Obj, sum);
+    }
 }
 
 void Model::constrBaseline(const Window& window, const std::set<unsigned long>& sourceSubMask) {
@@ -289,6 +318,43 @@ void Model::constrSNR(const Window& window, const std::set<unsigned long>& sourc
 }
 
 void Model::constrSlew(const Window& window, const std::set<unsigned long>& sourceSubMask) {
+    // there must be sufficient time in [t1, t2) for s to slew between q1, q2
+    size_t count = 0;
+    for(const Station& s : sol_.getStations()) {
+        for(const auto q1 : sol_.getSources()) {
+            if(!sourceSubMask.empty() && sourceSubMask.count(q1->getId()) == 0) continue;
+            for(size_t t1 : sol_.getBlocks(window.tp, window.tf, q1, s)) {
+                auto key_from = Solution::Key::StaActive(&sol_, q1, s, t1 + 1);
+                auto var_from = *getVar(Solution::Key::StaActive(&sol_, q1, s, t1));
+                for(const auto q2 : sol_.getSources()) {
+                    if(!sourceSubMask.empty() && sourceSubMask.count(q2->getId()) == 0) continue;
+                    for(size_t t2 : sol_.getBlocks(t1, window.tn, q2, s)) {
+                        if((t1 == t2 || t2 - t1 == 1) && q1->getId() == q2->getId()) continue;
+                        auto key_to = Solution::Key::StaActive(&sol_, q2, s, t2);
+                        size_t t_slew = sol_.getSlew(key_from, key_to);
+                        if ((s.getName() == "ZELENCHK" || s.getAlternativeName() == "ZELENCHK") &&
+                            (q1->getName() == "1144+402" || q1->getAlternativeName()  == "1144+402") &&
+                            (q2->getName() == "3C371" || q2->getAlternativeName() == "3C371") &&
+                            t1 == 23 && t2 == 30) {
+                            std::cout << "WARM START slew=" << t_slew << '\n';
+                        }
+                        if(t2 - t1 > t_slew) continue;
+                        auto var_to = *getVar(key_to);
+                        model_->addConstr(var_from + var_to <= 1, "constr_slew[" + s.getName() + "," + std::to_string(t_slew) + "," + q1->getName() + "," + std::to_string(t1) + "," + q2->getName() + "," + std::to_string(t2) + "]");
+                        count++;
+                    }
+                }
+            }
+        }
+    }
+#ifdef VIESCHEDPP_LOG
+    BOOST_LOG_TRIVIAL( info ) << "Added " << count << " slew constraints to model";
+#else
+    std::cout << "[info] Added " << count << " slew constraints to model";
+#endif
+}
+
+void Model::constrSlewIndicator(const Window& window, const std::set<unsigned long>& sourceSubMask) {
     // there must be sufficient time in [t1, t2) for s to slew between q1, q2
     size_t count = 0;
     for(const Station& s : sol_.getStations()) {

@@ -95,6 +95,8 @@ namespace VieVS {
     void SchedulerILP::start() noexcept {
         Scheduler::start();
         sortSchedule( Timestamp::start );
+        Skd greedy{path_ + getName() + "_greedy.skd"};
+        greedy.writeSkd(network_, sourceList_, scans_, skdCatalogs_, xml_);
 
         std::set<unsigned long> sourceMask;
         for(const Scan& scan : scans_) {

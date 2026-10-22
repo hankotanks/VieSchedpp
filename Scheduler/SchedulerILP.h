@@ -57,8 +57,8 @@ public:
     * @param path path to VieSchedpp.xml file
     * @param fname file name
     */
-    SchedulerILP( Initializer &init, std::string path, std::string fname, std::ofstream& statisticsOf ) : 
-        Scheduler(init, path, fname), statisticsOf_(statisticsOf) { /* STUB */ }
+    SchedulerILP( Initializer &init, std::string path, std::string fname, const SkdCatalogReader& skdCatalogs, std::ofstream& statisticsOf ) : 
+        Scheduler(init, path, fname), skdCatalogs_(skdCatalogs), statisticsOf_(statisticsOf) { /* STUB */ }
 
     ~SchedulerILP() {
         if(model_) delete model_;
@@ -89,6 +89,7 @@ public:
 
 private:
      Model* model_ = nullptr;
+     const SkdCatalogReader& skdCatalogs_;
      std::ofstream& statisticsOf_;
 };
 }

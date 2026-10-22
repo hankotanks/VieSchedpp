@@ -296,7 +296,7 @@ void VieSchedpp::run(void) {
                 
                 VieVS::Scheduler* scheduler;
                 if(ilp) {
-                    scheduler = new VieVS::SchedulerILP( newInit, path_, fname, statisticsOf );
+                    scheduler = new VieVS::SchedulerILP( newInit, path_, fname, skdCatalogs_, statisticsOf );
                 } else {
                     scheduler = new VieVS::Scheduler( newInit, path_, fname );
                 }

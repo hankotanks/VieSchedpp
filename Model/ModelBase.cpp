@@ -156,18 +156,18 @@ bool ModelBase::optimize(void) {
         std::cout << "[info] Added " << count << " BlnActive variables to model";
 #endif
 
-        if(t0 > tp) {
+        if(t0 > tp && false) {
             for(const Station& s : sol_.getStations()) {
                 for(const auto q1 : sol_.getSources()) { // starting
                     for(const auto q2 : sol_.getSources()) { // ending
                         if(q1->getId() == q2->getId()) continue;
                         auto key_to = Solution::Key::StaActive(&sol_, q2, s, t0);
                         for(size_t t1 : sol_.getBlocks(tp, t0, q1, s)) { // starting
-                            auto key_from = Solution::Key::StaActive(&sol_, q1, s, t1);
+                            auto key_from = Solution::Key::StaActive(&sol_, q1, s, t1 + 1);
                             if(*sol_.getSol(key_from)) {
                                 // check if any slew windows extend into the active optimization window
                                 size_t t_slew = sol_.getSlew(key_from, key_to);
-                                if(t1 + t_slew >= t0) {
+                                if(t1 + t_slew > t0) {
                                     for(size_t t2 : sol_.getBlocks(t0, t1 + t_slew + 1, q2, s)) { // ending
                                         Solution::Key key = Solution::Key::StaActive(&sol_, q2, s, t2);
                                         if(auto sol = sol_.getSol(key)) *sol = false;
@@ -185,12 +185,12 @@ next_backward:;
             }
         }
         
-        if(tf < tn) {
+        if(tf < tn && false) {
             for(const Station& s : sol_.getStations()) {
                 for(const auto q1 : sol_.getSources()) { // ending
                     for(const auto q2 : sol_.getSources()) { // starting
                         if(q1->getId() == q2->getId()) continue;
-                        auto key_from = Solution::Key::StaActive(&sol_, q2, s, tf);
+                        auto key_from = Solution::Key::StaActive(&sol_, q2, s, tf + 1);
                         for(size_t t1 : sol_.getBlocks(tf, tn, q1, s)) { // ending
                             auto key_to = Solution::Key::StaActive(&sol_, q1, s, t1);
                             if(*sol_.getSol(key_to)) {
@@ -271,36 +271,92 @@ next:;
         });
 
         // optimize the window
-        this->prepare({ .tp = tp, .tn = tn, .t0 = t0, .tf = tf });
-
-        // optimize
-        model_->optimize();
-
-        int status = model_->get(GRB_IntAttr_Status);
-        if(status == GRB_INFEASIBLE) {
-            model_->computeIIS();
-            model_->write("/tmp/iis.ilp");
-        }
-
-        // error checking
-        bool success = true;
-        if(status == GRB_TIME_LIMIT) {
-            if(model_->get(GRB_IntAttr_SolCount) == 0) {
+        std::vector<std::tuple<std::string, GRBLinExpr, int, unsigned int>> obj = this->prepare({ .tp = tp, .tn = tn, .t0 = t0, .tf = tf });
+        for(size_t i = 0; i < obj.size(); ++i) {
+            if(i > 0) {
+                if(std::get<2>(obj[i - 1]) == GRB_MAXIMIZE) {
+                    model_->addConstr(std::get<1>(obj[i - 1]) + 1e-6 >= model_->get(GRB_DoubleAttr_ObjVal));
+                } else {
+                    model_->addConstr(std::get<1>(obj[i - 1]) <= model_->get(GRB_DoubleAttr_ObjVal) + 1e-6);
+                }
+            }
+            model_->update();
+            model_->reset(0);
+            model_->setObjective(std::get<1>(obj[i]), std::get<2>(obj[i]));
+            model_->update();
+            if(std::get<3>(obj[i]) > 0) {
+                model_->getEnv().set(GRB_DoubleParam_TimeLimit, std::get<3>(obj[i]));
+            }
+#ifdef VIESCHEDPP_LOG
+                BOOST_LOG_TRIVIAL( info ) << "Optimizing " << std::get<0>(obj[i]);
+#else
+                std::cout << "[info] Optimizing " << std::get<0>(obj[i]);
+#endif
+            // std::map<int, double> val;
+            // for(const auto q : sol_.getSources()) {
+            //     for(size_t t : sol_.getBlocks(t0, tf)) {
+            //         for(const Station& s : sol_.getStations(t, q)) {
+            //             auto var = getVar(Solution::Key::StaActive(&sol_, q, s, t));
+            //             val.emplace(var->index(), var->get(GRB_DoubleAttr_X));
+            //         }
+            //         for(const Baseline& b : sol_.getBaselines(t, q)) {
+            //             auto var = getVar(Solution::Key::BlnActive(&sol_, q, b, t));
+            //             val.emplace(var->index(), var->get(GRB_DoubleAttr_X));
+            //         }
+            //     }
+            // }
+            // for(const Station& s : sol_.getStations()) {
+            //     for(size_t c = 0; c < coverage_->cellCount(); ++c) {
+            //         auto var = getVar(Solution::Key::StaCoverage(&sol_, s, c));
+            //         val.emplace(var->index(), var->get(GRB_DoubleAttr_X));
+            //     }
+            // }
+            // model_->reset(1);
+            // for(const auto q : sol_.getSources()) {
+            //     for(size_t t : sol_.getBlocks(t0, tf)) {
+            //         for(const Station& s : sol_.getStations(t, q)) {
+            //             auto var = getVar(Solution::Key::StaActive(&sol_, q, s, t));
+            //             var->set(GRB_DoubleAttr_X, val[var->index()]);
+            //         }
+            //         for(const Baseline& b : sol_.getBaselines(t, q)) {
+            //             auto var = getVar(Solution::Key::BlnActive(&sol_, q, b, t));
+            //             var->set(GRB_DoubleAttr_X, val[var->index()]);
+            //         }
+            //     }
+            // }
+            // for(const Station& s : sol_.getStations()) {
+            //     for(size_t c = 0; c < coverage_->cellCount(); ++c) {
+            //         auto var = getVar(Solution::Key::StaCoverage(&sol_, s, c));
+            //         var->set(GRB_DoubleAttr_X, val[var->index()]);
+            //     }
+            // }
+            model_->optimize();
+            int status = model_->get(GRB_IntAttr_Status);
+            if(status == GRB_INFEASIBLE) {
+                model_->computeIIS();
+                model_->write("/tmp/iis.ilp");
+            }
+            // error checking
+            bool success = true;
+            if(status == GRB_TIME_LIMIT) {
+                if(model_->get(GRB_IntAttr_SolCount) == 0) {
+                    success = false;
+                }
+            } else if(status != GRB_OPTIMAL && status != GRB_SUBOPTIMAL) {
                 success = false;
             }
-        } else if(status != GRB_OPTIMAL && status != GRB_SUBOPTIMAL) {
-            success = false;
-        }
 
-        if(!success) {
+            if(!success) {
 #ifdef VIESCHEDPP_LOG
-            BOOST_LOG_TRIVIAL( info ) << "No optimal solution found between " << t0 * sol_.blockLength_ << " and " << tf * sol_.blockLength_;
+                BOOST_LOG_TRIVIAL( info ) << "No optimal solution found between " << t0 * sol_.blockLength_ << " and " << tf * sol_.blockLength_;
 #else
-            std::cout << "[info] No optimal solution found between " << t0 * blockLength_ << " and " << tf * blockLength_;
+                std::cout << "[info] No optimal solution found between " << t0 * sol_.blockLength_ << " and " << tf * sol_.blockLength_;
 #endif
-            return false;
+                return false;
+            }
+            this->post({ .tp = tp, .tn = tn, .t0 = t0, .tf = tf }, std::get<0>(obj[i]));
         }
-
+        
 #ifdef VIESCHEDPP_LOG
         BOOST_LOG_TRIVIAL( info ) << "Completed optimization between " << t0 * sol_.blockLength_ << " and " << tf * sol_.blockLength_;
 #else
@@ -479,7 +535,7 @@ std::set<std::tuple<const Observation*, size_t, size_t>> ModelBase::validateScan
     return obsValidInner;
 }
 
-void ModelBase::loadScans(const std::vector<Scan>& scans) {
+void ModelBase::loadScans(std::vector<Scan>& scans) {
     if(scans.empty()) {
 #ifdef VIESCHEDPP_LOG
         BOOST_LOG_TRIVIAL( info ) << "Skipped loading MIP solution. No scans provided";
@@ -503,8 +559,10 @@ void ModelBase::loadScans(const std::vector<Scan>& scans) {
             Station& s2 = sol_.network_.refStation(b.getStaid2());
 
             // observation start blocks
-            size_t t10 = (scanTimes.getObservingTime(s1.getId())) / sol_.blockLength_;
-            size_t t20 = (scanTimes.getObservingTime(s2.getId())) / sol_.blockLength_;
+            size_t t10 = scanTimes.getObservingTime(Timestamp::start) / sol_.blockLength_; // (scanTimes.getObservingTime(s1.getId())) / sol_.blockLength_;
+            size_t t20 = scanTimes.getObservingTime(Timestamp::start) / sol_.blockLength_; // (scanTimes.getObservingTime(s2.getId())) / sol_.blockLength_;
+
+            if(t10 > sol_.blockCount_ || t20 > sol_.blockCount_) continue;
 
             // the number of blocks each station is observing
             size_t t1f = scanTimes.getObservingTime(s1.getId(), Timestamp::end) / sol_.blockLength_;
@@ -514,6 +572,105 @@ void ModelBase::loadScans(const std::vector<Scan>& scans) {
             while(t1f > 0 && !sol_.getSol(Solution::Key::StaActive(&sol_, q, s1, t1f))) --t1f;
             while(t2f > 0 && !sol_.getSol(Solution::Key::StaActive(&sol_, q, s2, t2f))) --t2f;
             // check that these are possible, if they aren't then advance by one segment
+#if 0
+while (t10 < sol_.blockCount_) {
+    // Find the next block where q is active.
+    while (t10 < sol_.blockCount_ &&
+           !sol_.getSol(Solution::Key::StaActive(&sol_, q, s1, t10)))
+        ++t10;
+
+    if (t10 >= sol_.blockCount_)
+        break;
+
+    size_t requiredStart = t10;
+
+    // Check every preceding active source.
+    for (size_t t = t10; t-- > 0;) {
+        for (const auto q2 : sol_.getSources()) {
+            if (q2->getId() == q->getId())
+                continue;
+
+            auto active = sol_.getSol(
+                Solution::Key::StaActive(&sol_, q2, s1, t));
+          
+            if (!active || !*active)
+                continue;
+
+            const size_t t_slew = sol_.getSlew(
+                Solution::Key::StaActive(&sol_, q2, s1, t + 1),
+                Solution::Key::StaActive(&sol_, q, s1, t10));
+
+            if(t10 == 30) {
+                // std::cout << s1.getName() << ","<< s2.getName()<< "," << t_slew <<","<<q2->getName()<<","<<t<<","<<q->getName()<<","<<t10<<std::endl;
+            }
+            if ((s1.getName() == "ZELENCHK" || s1.getAlternativeName() == "ZELENCHK") &&
+                (q2->getName() == "1144+402" || q2->getAlternativeName()  == "1144+402") &&
+                (q->getName() == "3C371" || q->getAlternativeName() == "3C371") &&
+                t == 23 && t10 == 30) {
+                std::cout << "WARM START slew=" << t_slew << '\n';
+            }
+
+            // constrSlew requires t10 - t > t_slew.
+            if (t10 - t <= t_slew) {
+                requiredStart = std::max(requiredStart, t + t_slew + 1);
+            }
+        }
+    }
+
+    if (requiredStart == t10)
+        break; // No slew conflict.
+
+    t10 = requiredStart;
+}
+while (t20 < sol_.blockCount_) {
+    // Find the next block where q is active.
+    while (t20 < sol_.blockCount_ &&
+           !sol_.getSol(Solution::Key::StaActive(&sol_, q, s2, t20)))
+        ++t20;
+
+    if (t20 >= sol_.blockCount_)
+        break;
+
+    size_t requiredStart = t20;
+
+    // Check every preceding active source.
+    for (size_t t = t20; t-- > 0;) {
+        for (const auto q2 : sol_.getSources()) {
+            if (q2->getId() == q->getId())
+                continue;
+
+            auto active = sol_.getSol(
+                Solution::Key::StaActive(&sol_, q2, s2, t));
+             
+            if (!active || !*active)
+                continue;
+
+            const size_t t_slew = sol_.getSlew(
+                Solution::Key::StaActive(&sol_, q2, s2, t + 1),
+                Solution::Key::StaActive(&sol_, q, s2, t20));
+            if(t20 == 30) {
+                // std::cout << s1.getName() <<","<< s2.getName() << "," << t_slew <<","<<q2->getName()<<","<<t<<","<<q->getName()<<","<<t20<<std::endl;
+            }
+            if ((s2.getName() == "ZELENCHK" || s2.getAlternativeName() == "ZELENCHK") &&
+                (q2->getName() == "1144+402" || q2->getAlternativeName()  == "1144+402") &&
+                (q->getName() == "3C371" || q->getAlternativeName() == "3C371") &&
+                t == 23 && t20 == 30) {
+                std::cout << "WARM START slew=" << t_slew << '\n';
+            }
+
+            // constrSlew requires t20 - t > t_slew.
+            if (t20 - t <= t_slew) {
+                requiredStart = std::max(requiredStart, t + t_slew + 1);
+            }
+        }
+    }
+
+    if (requiredStart == t20)
+        break; // No slew conflict.
+
+    t20 = requiredStart;
+}
+#else
             if(sol_.getSol(Solution::Key::StaActive(&sol_, q, s1, t10))) {
                 for(const auto q2 : sol_.getSources()) {
                     if(q->getId() == q2->getId()) continue;
@@ -524,22 +681,25 @@ void ModelBase::loadScans(const std::vector<Scan>& scans) {
                         }
                     }
                 }
-                for(size_t t = t10; t-- > 0;) {
-                    for(const auto q2 : sol_.getSources()) {
-                        if(q->getId() == q2->getId()) continue;
-                        if(auto sol = sol_.getSol(Solution::Key::StaActive(&sol_, q2, s1, t))) {
-                            if(*sol) {
-                                // then we need to check slew time
-                                size_t t_slew = sol_.getSlew(Solution::Key::StaActive(&sol_, q2, s1, t), 
-                                    Solution::Key::StaActive(&sol_, q, s1, t10));
-                                if(t + t_slew >= t10) t10++;
-                                goto terminate_s1;
+            }
+            for(size_t t = t10; t-- > 0;) {
+                for(const auto q2 : sol_.getSources()) {
+                    if(q->getId() == q2->getId()) continue;
+                    if(auto sol = sol_.getSol(Solution::Key::StaActive(&sol_, q2, s1, t))) {
+                        if(*sol) {
+                            // then we need to check slew time
+                            size_t t_slew = sol_.getSlew(Solution::Key::StaActive(&sol_, q2, s1, t + 1), 
+                                Solution::Key::StaActive(&sol_, q, s1, t10));
+                            if(t10 == 30) {
+                                std::cout << s1.getName() << " " << s2.getName() << " t: " << t << " t10: " << t10 << " t_slew: " << t_slew << std::endl;
                             }
+                            if(t10 - t <= t_slew) t10 += t_slew + 1 - (t10 - t);
+                            goto terminate_s1;
                         }
                     }
                 }
-terminate_s1:;
             }
+terminate_s1:;
             while(t10 < sol_.blockCount_ && !sol_.getSol(Solution::Key::StaActive(&sol_, q, s1, t10))) ++t10;
 
             // start by flooring the scan starts, then check if there is enough slew time
@@ -553,24 +713,27 @@ terminate_s1:;
                         }
                     }
                 }
-                for(size_t t = t20; t-- > 0;) {
-                    for(const auto q2 : sol_.getSources()) {
-                        if(q->getId() == q2->getId()) continue;
-                        if(auto sol = sol_.getSol(Solution::Key::StaActive(&sol_, q2, s2, t))) {
-                            if(*sol) {
-                                // then we need to check slew time
-                                size_t t_slew = sol_.getSlew(Solution::Key::StaActive(&sol_, q2, s2, t), 
-                                    Solution::Key::StaActive(&sol_, q, s2, t20));
-                                if(t + t_slew >= t20) t20++;
-                                goto terminate_s2;
+            }
+            for(size_t t = t20; t-- > 0;) {
+                for(const auto q2 : sol_.getSources()) {
+                    if(q->getId() == q2->getId()) continue;
+                    if(auto sol = sol_.getSol(Solution::Key::StaActive(&sol_, q2, s2, t))) {
+                        if(*sol) {
+                            // then we need to check slew time
+                            size_t t_slew = sol_.getSlew(Solution::Key::StaActive(&sol_, q2, s2, t + 1), 
+                                Solution::Key::StaActive(&sol_, q, s2, t20));
+                            if(t20 == 30) {
+                                std::cout << s1.getName() << " " << s2.getName() << " t: " << t << " t20: " << t20 << " t_slew: " << t_slew << std::endl;
                             }
+                            if(t20 - t <= t_slew) t20 += t_slew + 1 - (t20 - t);
+                            goto terminate_s2;
                         }
                     }
                 }
-terminate_s2:;
             }
+terminate_s2:;
             while(t20 < sol_.blockCount_ && !sol_.getSol(Solution::Key::StaActive(&sol_, q, s2, t20))) ++t20;
-
+#endif
             // check if any starts exceed the ends
             if(t10 >= t1f) continue;
             if(t20 >= t2f) continue;

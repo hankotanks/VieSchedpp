@@ -155,7 +155,16 @@ protected:
      *
      * @param window the optimization span
      */
-    virtual void prepare(const Window& window) = 0;
+    virtual std::vector<std::tuple<std::string, GRBLinExpr, int, unsigned int>> prepare(const Window& window) = 0;
+
+    /**
+     * @brief called after completing an optimization stage
+     * @author Hank Lewis
+     *
+     * @param window the optimization span
+     * @param name the name of the completed stage
+    */
+    virtual void post(const Window& window, const std::string& name) = 0;
 
 #ifdef WITH_GUROBI
     /**
@@ -262,7 +271,7 @@ private:
      *
      * @param scans scans from greedy solution
      */
-    void loadScans(const std::vector<Scan>& scans);
+    void loadScans(std::vector<Scan>& scans);
     
     /**
      * @brief produces a series of VieVS::Scans from the Solution

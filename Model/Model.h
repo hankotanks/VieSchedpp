@@ -100,7 +100,13 @@ protected:
      * @brief override of ModelBase::prepare, called once the model is initialized
      * @author Hank Lewis
     */
-    virtual void prepare(const Window& window) override;
+    virtual std::vector<std::tuple<std::string, GRBLinExpr, int, unsigned int>> prepare(const Window& window) override;
+
+    /**
+     * @brief override of ModelBase::post, called after completing an optimization stage
+     * @author Hank Lewis
+    */
+    virtual void post(const Window& window, const std::string& name) override;
 
 private:
 #ifdef WITH_GUROBI
@@ -151,6 +157,12 @@ private:
      * @author Hank Lewis
     */
     void constrSlew(const Window& window, const std::set<unsigned long>& sourceSubMask);
+
+    /**
+     * @brief ensure enough time to slew between observations
+     * @author Hank Lewis
+    */
+    void constrSlewIndicator(const Window& window, const std::set<unsigned long>& sourceSubMask);
 
     /**
      * @brief ensure StaCoverage tied to StaActive
