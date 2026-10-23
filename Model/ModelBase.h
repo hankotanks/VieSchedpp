@@ -216,6 +216,7 @@ protected:
     }
 
 private:
+#if 0
     /**
      * @struct helper class for ActiveScans
      * @author Hank Lewis
@@ -255,6 +256,20 @@ private:
             const std::vector<Scan>& scans) noexcept;
         std::vector<unsigned int> computeEndOfLastScan(const ScanBuilder& scan, 
             const std::vector<Scan>& scans) noexcept;
+    };
+#endif
+
+    struct Interval {
+        size_t start, end;
+        unsigned int s;
+        unsigned int q;
+        Interval(size_t start_, size_t end_, unsigned int s_, unsigned int q_) : start(start_), end(end_), s(s_), q(q_) { /* STUB */ }
+    };
+
+    
+    struct ActiveGroup {
+        std::map<unsigned int, Interval> stations;
+        std::set<unsigned int> continuations;
     };
 
     /**

@@ -23,6 +23,7 @@
 #include <limits>
 #include <memory>
 #include <stdexcept>
+#include <tuple>
 #include <vector>
 
 // gurobi
@@ -808,6 +809,7 @@ terminate_s2:;
 #endif
 }
 
+#if 0
 boost::optional<bool> ModelBase::ScanBuilder::append(const ModelBase* model, std::shared_ptr<const VieVS::AbstractSource> const q, 
     Station& s, size_t t) noexcept {
     if(qId != q->getId()) return boost::none;
@@ -1064,6 +1066,292 @@ std::vector<Scan> ModelBase::readScans(void) const noexcept {
         }
 
         scansActive.updateScans(scans, t);
+    }
+
+    return scans;
+}
+#endif
+
+std::vector<Scan> ModelBase::readScans(void) const noexcept {
+    std::map<unsigned long, char> qId;
+    for(const unsigned long q : sol_.sourceMask_) {
+        qId.insert(std::make_pair(q, static_cast<char>(qId.size() + '!')));
+    }
+
+    std::map<unsigned int, std::vector<Interval>> intervals;
+    for(Station& s : sol_.network_.refStations()) intervals[s.getId()] = {};
+
+    for(size_t t = 0; t <= sol_.blockCount_; ++t) {
+        for(Station& s : sol_.network_.refStations()) {
+            std::vector<Interval>& s_intervals = intervals[s.getId()];
+            for(const auto q : sol_.getSources()) {
+                if(auto sol = sol_.getSol(Solution::Key::StaActive(&sol_, q, s, t))) {
+                    if(*sol) {
+                        if(s_intervals.empty()) {
+                            s_intervals.emplace_back(t, t, s.getId(), q->getId());
+                        } else {
+                            Interval& last = s_intervals.back();
+                            if(last.q == q->getId() && last.end + 1 == t) {
+                                last.end++;
+                            } else {
+                                s_intervals.emplace_back(t, t, s.getId(), q->getId());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    std::map<unsigned int, std::vector<Interval>> bySource;
+
+    for (const auto& entry : intervals) {
+        for (const Interval& interval : entry.second) {
+            bySource[interval.q].push_back(interval);
+        }
+    }
+
+    auto printGroup = [&](unsigned int q, const ActiveGroup& group) {
+        if (group.stations.empty()) {
+            return;
+        }
+
+        size_t first = std::numeric_limits<size_t>::max();
+        size_t last = 0;
+
+        for (const auto& entry : group.stations) {
+            first = std::min(first, entry.second.start);
+            last = std::max(last, entry.second.end);
+        }
+
+        std::cout << "["
+                << sol_.sourceList_.getSource(q)->getName()
+                << ", " << first
+                << ", " << last
+                << "]\n";
+
+        for (const Station& station : sol_.network_.getStations()) {
+            auto it = group.stations.find(station.getId());
+            if (it == group.stations.end()) {
+                continue;
+            }
+
+            const Interval& interval = it->second;
+            std::cout << station.getName() << (group.continuations.count(station.getId()) > 0 ? "(continuation)" : "(initial)") << '\n';
+
+            for (size_t t = first; t <= last; ++t) {
+                std::cout << ((t >= interval.start && t <= interval.end)
+                                ? qId.at(q)
+                                : ' ');
+            }
+
+            std::cout << '\n';
+        }
+    };
+
+    std::vector<std::pair<unsigned int, ActiveGroup>> groups;
+    for (auto& sourceEntry : bySource) {
+        const unsigned int q = sourceEntry.first;
+        auto& sourceIntervals = sourceEntry.second;
+
+        std::sort(sourceIntervals.begin(), sourceIntervals.end(),
+            [](const Interval& a, const Interval& b) {
+                if (a.start != b.start) return a.start < b.start;
+                if (a.end != b.end) return a.end < b.end;
+                return a.s < b.s;
+            });
+
+        ActiveGroup current;
+        bool haveGroup = false;
+
+        size_t i = 0;
+        while (i < sourceIntervals.size()) {
+            // Process all station starts at this epoch together.
+            const size_t epoch = sourceIntervals[i].start;
+            size_t j = i;
+
+            while (j < sourceIntervals.size() &&
+                sourceIntervals[j].start == epoch) {
+                ++j;
+            }
+
+            // Determine whether this epoch introduces a new station
+            // into an observation that is already active.
+            bool lateJoin = false;
+
+            if (haveGroup) {
+                bool observationActive = false;
+
+                for (const auto& entry : current.stations) {
+                    if (entry.second.end >= epoch) {
+                        observationActive = true;
+                        break;
+                    }
+                }
+
+                if (observationActive) {
+                    for (size_t k = i; k < j; ++k) {
+                        if (current.stations.find(sourceIntervals[k].s) ==
+                            current.stations.end()) {
+                            lateJoin = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (haveGroup && !lateJoin) {
+                bool observationActive = false;
+
+                for (const auto& entry : current.stations) {
+                    if (entry.second.end >= epoch) {
+                        observationActive = true;
+                        break;
+                    }
+                }
+
+                if (!observationActive) {
+                    groups.emplace_back(q, current);
+                    current = ActiveGroup{};
+                    haveGroup = false;
+                }
+            }
+
+            if (lateJoin) {
+                ActiveGroup continuation;
+
+                // Close the initial group immediately before the join.
+                for (auto it = current.stations.begin();
+                    it != current.stations.end();) {
+                    Interval& oldInterval = it->second;
+
+                    if (oldInterval.end >= epoch) {
+                        Interval continued = oldInterval;
+                        continued.start = epoch;
+
+                        oldInterval.end = epoch - 1;
+
+                        continuation.stations.emplace(
+                            it->first, continued);
+                        continuation.continuations.insert(it->first);
+                    }
+
+                    if (oldInterval.start > oldInterval.end) {
+                        it = current.stations.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
+
+                groups.emplace_back(q, current);
+                current = std::move(continuation);
+            }
+
+            // Add the stations starting at this epoch. This is done
+            // after splitting so simultaneous joins stay in one group.
+            for (size_t k = i; k < j; ++k) {
+                const Interval& interval = sourceIntervals[k];
+                auto it = current.stations.find(interval.s);
+
+                if (it == current.stations.end()) {
+                    current.stations.emplace(interval.s, interval);
+                } else {
+                    // Merge adjacent or overlapping intervals for
+                    // the same station, if encountered.
+                    it->second.start = std::min(
+                        it->second.start, interval.start);
+                    it->second.end = std::max(
+                        it->second.end, interval.end);
+                }
+            }
+
+            haveGroup = true;
+            i = j;
+        }
+
+        // Do not forget the last group: it may still be active.
+        if (haveGroup) {
+            groups.emplace_back(q, current);
+        }
+    }
+
+    std::sort(groups.begin(), groups.end(), [](const auto& a, const auto& b) {
+        size_t a_first = std::numeric_limits<size_t>::max();
+        for (const auto& entry : std::get<1>(a).stations) a_first = std::min(a_first, entry.second.start);
+        size_t b_first = std::numeric_limits<size_t>::max();
+        for (const auto& entry : std::get<1>(b).stations) b_first = std::min(b_first, entry.second.start);
+        return a_first < b_first;
+    });
+
+    std::vector<Scan> scans;
+
+    std::map<unsigned int, std::pair<unsigned int, size_t>> eols;
+    for(const auto& entry : groups) {
+        // printGroup(entry.first, entry.second);
+        const auto& q_id = std::get<0>(entry);
+        const auto q = sol_.sourceList_.getSource(q_id);
+        const auto& group = std::get<1>(entry);
+
+        std::vector<PointingVector> pointingVectors;
+        std::vector<PointingVector> pointingVectorsEnd;
+        for(const auto& group_entry : group.stations) {
+            const auto& s_id = std::get<0>(group_entry);
+            const auto& s_interval = std::get<1>(group_entry);
+            PointingVector s_pv_0{s_id, q_id};
+            s_pv_0.setTime(s_interval.start * sol_.blockLength_);
+            sol_.network_.refStation(s_id).calcAzEl_rigorous(q, s_pv_0);
+            pointingVectors.emplace_back(s_pv_0);
+            PointingVector s_pv_f{s_id, q_id};
+            s_pv_f.setTime((s_interval.end + 1) * sol_.blockLength_);
+            sol_.network_.refStation(s_id).calcAzEl_rigorous(q, s_pv_f);
+            pointingVectorsEnd.emplace_back(s_pv_f);
+        }
+        std::vector<unsigned int> endOfLastScan;
+        for(const auto& group_entry : group.stations) {
+            const auto& s_id = std::get<0>(group_entry);
+            if(eols.count(s_id) > 0 && group.continuations.count(s_id) == 0) {
+                endOfLastScan.emplace_back((eols.at(s_id).second + 1) * sol_.blockLength_);
+            } else {
+                const auto& s_interval = std::get<1>(group_entry);
+                endOfLastScan.emplace_back(s_interval.start * sol_.blockLength_);
+            }
+        }
+        Scan scan{pointingVectors, endOfLastScan, Scan::ScanType::standard};
+        scan.setPointingVectorsEndtime(pointingVectorsEnd);
+        size_t idx = 0;
+        for(const auto& group_entry : group.stations) {
+            const auto& s_id = std::get<0>(group_entry);
+            auto& s = sol_.network_.refStation(s_id);
+            const auto& s_interval = std::get<1>(group_entry);
+            if(eols.count(s_id) > 0 && group.continuations.count(s_id) == 0) {
+                const auto& q_id_0 = eols.at(s_id).first;
+                const auto q_0 = sol_.sourceList_.getSource(q_id_0);
+                PointingVector s_pv_0{s_id, q_id_0};
+                s_pv_0.setTime((eols.at(s_id).second + 1) * sol_.blockLength_ + s.getPARA().systemDelay);
+                s.calcAzEl_rigorous(q_0, s_pv_0);
+                PointingVector s_pv_f{s_id, q_id};
+                s_pv_f.setTime(s_interval.start * sol_.blockLength_ - s.getPARA().preob);
+                s.calcAzEl_rigorous(q, s_pv_f);
+                unsigned int slew = s.getAntenna().slewTime(s_pv_0, s_pv_f);
+                // slew time is from (eols + systemDelay) to (s_interval.start * blockLength - preob)
+                scan.addTimes(idx, s.getPARA().systemDelay, slew, s.getPARA().preob);
+            } else {
+                scan.addTimes(idx, 0, 0, 0);
+            }
+            idx++;
+        }
+
+        std::vector<unsigned int> scanTimes;
+        for(const auto& group_entry : group.stations) {
+            const auto& s_id = std::get<0>(group_entry);
+            auto& s = sol_.network_.refStation(s_id);
+            const auto& s_interval = std::get<1>(group_entry);
+            scanTimes.emplace_back((s_interval.end - s_interval.start + 1) * sol_.blockLength_);
+        }
+        scan.referenceTime().setObservingTimes(scanTimes, false);
+        scan.constructObservations(sol_.network_, q);
+
+        scans.emplace_back(scan);
     }
 
     return scans;
