@@ -147,20 +147,6 @@ namespace VieVS {
         scans_.insert(scans_.end(), scansOptimal.begin(), scansOptimal.end());
         sortSchedule( Timestamp::start );
 
-#if 0
-        for(const Scan& scan : scans_) {
-            std::cout << "[" << scan.getId() << "] source: " << scan.getSourceId();
-            for(unsigned long sId : scan.getStationIds()) {
-                if(auto idx = scan.findIdxOfStationId(sId)) {
-                    std::cout << ", " << network_.getStation(sId).getName() << 
-                        " (" << scan.getTimes().getObservingTime(*idx) << 
-                        " for " << scan.getTimes().getObservingDuration(*idx) << ")";
-                }
-            }
-            std::cout << std::endl;
-        }
-#endif
-
         // clear all the statistics from the greedy run
         for(Station& s : network_.refStations()) {
             s.setStatistics(Station::Statistics());
@@ -184,36 +170,12 @@ namespace VieVS {
             sky.calculateSkyCoverageScores();
         }
 
-        std::string fileName = getName() + "_iteration_ilp.txt";
-        std::ofstream of;
-        of.open( path_ + fileName );
-
-        // TODO: This currently causes rare slew time violations
-#if 0
-        if ( parameters_.idleToObservingTime ) {
-            switch ( ScanTimes::getAlignmentAnchor() ) {
-                case ScanTimes::AlignmentAnchor::start: {
-                    idleToScanTime( Timestamp::end, of );
-                    break;
-                }
-                case ScanTimes::AlignmentAnchor::end: {
-                    idleToScanTime( Timestamp::start, of );
-                    break;
-                }
-                case ScanTimes::AlignmentAnchor::individual: {
-                    idleToScanTime( Timestamp::end, of );
-                    idleToScanTime( Timestamp::start, of );
-                    break;
-                }
-                default:
-                    break;
-            }
-        }
-#endif
-
         updateObservingTimes();
 
         // check if there was an error during the session (and append to the output log)
+        std::string fileName = getName() + "_iteration_ilp.txt";
+        std::ofstream of;
+        of.open( path_ + fileName );
         if ( !checkAndStatistics( of ) ) {
 #ifdef VIESCHEDPP_LOG
             BOOST_LOG_TRIVIAL( error ) << "error(s) found while checking the schedule";

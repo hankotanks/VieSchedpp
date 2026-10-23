@@ -422,6 +422,19 @@ class Scan : public VieVS_Object {
 
 
     /**
+     * @brief adds scan times
+     * @author Hank Lewis
+     *
+     * @param idx index of element
+     * @param fieldSystem field system time in seconds
+     * @param slew slew time in seconds
+     * @param idle idle time in seconds
+     * @param preob calibration time in secons
+     */
+    void addTimes( int idx, unsigned int fieldSystem, unsigned int slew, unsigned int idle, unsigned int preob ) noexcept;
+
+
+    /**
      * @brief constructs all possible observations
      * @author Matthias Schartner
      *

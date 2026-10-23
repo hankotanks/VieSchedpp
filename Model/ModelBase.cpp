@@ -1333,8 +1333,10 @@ std::vector<Scan> ModelBase::readScans(void) const noexcept {
                 s_pv_f.setTime(s_interval.start * sol_.blockLength_ - s.getPARA().preob);
                 s.calcAzEl_rigorous(q, s_pv_f);
                 unsigned int slew = s.getAntenna().slewTime(s_pv_0, s_pv_f);
+                unsigned int idle = (s_pv_f.getTime() - s_pv_0.getTime()) - slew - s.getPARA().preob - s.getPARA().systemDelay;
                 // slew time is from (eols + systemDelay) to (s_interval.start * blockLength - preob)
-                scan.addTimes(idx, s.getPARA().systemDelay, slew, s.getPARA().preob);
+                scan.addTimes(idx, s.getPARA().systemDelay, slew, idle, s.getPARA().preob);
+                scan.referenceTime().setPreobTime(idx, s.getPARA().preob);
             } else {
                 scan.addTimes(idx, 0, 0, 0);
             }
@@ -1352,6 +1354,12 @@ std::vector<Scan> ModelBase::readScans(void) const noexcept {
         scan.constructObservations(sol_.network_, q);
 
         scans.emplace_back(scan);
+
+        for(const auto& group_entry : group.stations) {
+            const auto& s_id = group_entry.first;
+            const auto& s_interval = group_entry.second;
+            eols[s_id] = {q_id, s_interval.end};
+        }
     }
 
     return scans;

@@ -209,6 +209,11 @@ void Scan::addTimes( int idx, unsigned int fieldSystem, unsigned int slew, unsig
 }
 
 
+void Scan::addTimes( int idx, unsigned int fieldSystem, unsigned int slew, unsigned int idle, unsigned int preob ) noexcept {
+    times_.addTimes( idx, fieldSystem, slew, idle, preob );
+}
+
+
 bool Scan::removeStation( int idx, const shared_ptr<const AbstractSource> &source ) noexcept {
     unsigned long staid = pointingVectorsStart_[idx].getStaid();
 #ifdef VIESCHEDPP_LOG

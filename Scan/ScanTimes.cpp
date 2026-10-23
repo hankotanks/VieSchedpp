@@ -43,6 +43,13 @@ void ScanTimes::addTimes( int idx, unsigned int fieldSystem, unsigned int slew, 
     endOfObservingTime_[idx] = endOfIdleTime_[idx] + preob;
 }
 
+void ScanTimes::addTimes( int idx, unsigned int fieldSystem, unsigned int slew, unsigned int idle, unsigned int preob ) noexcept {
+    endOfFieldSystemTime_[idx] = endOfLastScan_[idx] + fieldSystem;
+    endOfSlewTime_[idx] = endOfFieldSystemTime_[idx] + slew;
+    endOfIdleTime_[idx] = endOfSlewTime_[idx] + idle;
+    endOfPreobTime_[idx] = endOfIdleTime_[idx] + preob;
+}
+
 
 void ScanTimes::removeElement( int idx ) noexcept {
     endOfLastScan_.erase( next( endOfLastScan_.begin(), idx ) );
