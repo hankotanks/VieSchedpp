@@ -567,6 +567,16 @@ class ScanTimes : public VieVS_Object {
 
 
     /**
+     * @brief set ile time for one station
+     * @author Hank Lewis
+     *
+     * @param idx index
+     * @param idle idle time
+     */
+    void setIdleTime( int idx, unsigned int idle );
+
+
+    /**
      * @brief remove unnecessary observing time
      * @author Matthias Schartner
      *

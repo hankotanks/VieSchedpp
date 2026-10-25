@@ -263,6 +263,15 @@ bool ScanTimes::setPreobTime( int i, unsigned int preob ) {
 }
 
 
+void ScanTimes::setIdleTime( int i, unsigned int idle ) {
+    unsigned int slewTime = getSlewDuration(i);
+    unsigned int fieldSystemTime = getFieldSystemDuration(i);
+    endOfSlewTime_[i] = endOfIdleTime_[i] - idle;
+    endOfFieldSystemTime_[i] = endOfSlewTime_[i] - slewTime;
+    endOfLastScan_[i] = endOfFieldSystemTime_[i] - fieldSystemTime;
+}
+
+
 void ScanTimes::setObservingTime( int idx, unsigned int time, Timestamp ts ) {
     switch ( ts ) {
         case Timestamp::start: {

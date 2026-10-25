@@ -405,7 +405,9 @@ std::vector<Scan> ModelBase::optimize(std::vector<Scan>& scans) {
 #ifdef WITH_GUROBI
     ModelBase::loadScans(scans);
     if(!ModelBase::optimize()) return {};
-    return ModelBase::readScans();
+    std::vector<Scan> newScans = ModelBase::readScans();
+    ModelBase::packScans(newScans);
+    return newScans;
 #else // WITH_GUROBI
     return {};
 #endif // WITH_GUROBI
@@ -1364,6 +1366,180 @@ std::vector<Scan> ModelBase::readScans(void) const noexcept {
 
     return scans;
 }
+
+void dumpTimes(const ScanTimes& times, unsigned int idx) {
+    unsigned int start = times.getFieldSystemTime(idx);
+    unsigned int slew = times.getSlewTime(idx);
+    unsigned int idle = times.getIdleTime(idx);
+    unsigned int preob = times.getPreobTime(idx);
+    unsigned int obs = times.getObservingTime(idx, Timestamp::start);
+    unsigned int end = times.getObservingTime(idx, Timestamp::end);
+    std::cout << start << ", " << slew << ", " << idle << ", " << preob << ", " << obs << ", " << end << std::endl;
+}
+
+
+void ModelBase::packScans(std::vector<Scan>& scans) const noexcept
+{
+    std::map<unsigned int, std::vector<size_t>> scansByStation;
+
+    for (const Station& station : sol_.network_.getStations()) {
+        scansByStation.emplace(station.getId(), std::vector<size_t>{});
+    }
+
+    for (size_t i = 0; i < scans.size(); ++i) {
+        for (unsigned int s_id : scans[i].getStationIds()) {
+            scansByStation[s_id].push_back(i);
+        }
+    }
+
+    // Sort each station's scans chronologically.
+    for (auto& entry : scansByStation) {
+        const unsigned int s_id = entry.first;
+        auto& stationScans = entry.second;
+
+        std::sort(
+            stationScans.begin(),
+            stationScans.end(),
+            [&scans, s_id](size_t a, size_t b) {
+                const auto idxA = *scans[a].findIdxOfStationId(s_id);
+                const auto idxB = *scans[b].findIdxOfStationId(s_id);
+
+                const unsigned int startA =
+                    scans[a].getTimes().getFieldSystemTime(idxA);
+                const unsigned int startB =
+                    scans[b].getTimes().getFieldSystemTime(idxB);
+
+                return startA != startB ? startA < startB : a < b;
+            });
+    }
+
+    // Grow observations forward, reclaiming idle time from the next scan.
+    // Grow each scan forward by reclaiming idle time from the NEXT scan.
+    for (const auto& entry : scansByStation) {
+        const unsigned int s_id = entry.first;
+        const auto& stationScans = entry.second;
+
+        for (size_t i = 0; i + 1 < stationScans.size(); ++i) {
+            Scan& current = scans[stationScans[i]];
+            Scan& next = scans[stationScans[i + 1]];
+
+            ScanTimes& currentTimes = current.referenceTime();
+            ScanTimes& nextTimes = next.referenceTime();
+
+            const unsigned long currentIdx =
+                *current.findIdxOfStationId(s_id);
+            const unsigned long nextIdx =
+                *next.findIdxOfStationId(s_id);
+
+            const unsigned int currentEnd =
+                currentTimes.getObservingTime(
+                    currentIdx, Timestamp::end);
+
+            const unsigned int nextIdle =
+                nextTimes.getIdleDuration(nextIdx);
+
+            if (nextIdle == 0) {
+                continue;
+            }
+
+            // Reclaim the available idle time from the next scan.
+            const unsigned int shift = nextIdle;
+
+            // Grow the CURRENT scan's observation end.
+            currentTimes.setObservingTime(
+                currentIdx,
+                currentEnd + shift,
+                Timestamp::end);
+
+            // Reduce the NEXT scan's idle time by the same amount.
+            nextTimes.setIdleTime(
+                nextIdx,
+                nextIdle - shift);
+        }
+    }
+
+    // Clip the latest observation ends so that at least
+    // minNumberOfSites stations remain co-observing.
+    for (Scan& scan : scans) {
+        ScanTimes& times = scan.referenceTime();
+
+        const unsigned int minSites =
+            sol_.sourceList_.getSource(scan.getSourceId())
+                ->getPARA().minNumberOfSites;
+
+        if (scan.getStationIds().size() < minSites || minSites == 0) {
+            continue;
+        }
+
+        std::vector<std::pair<unsigned int, unsigned long>> observingEnds;
+        observingEnds.reserve(scan.getStationIds().size());
+
+        for (unsigned int s_id : scan.getStationIds()) {
+            const unsigned long idx =
+                *scan.findIdxOfStationId(s_id);
+
+            const unsigned int end =
+                times.getObservingTime(idx, Timestamp::end);
+
+            observingEnds.emplace_back(end, idx);
+        }
+
+        // Sort observation ends from latest to earliest.
+        std::sort(
+            observingEnds.begin(),
+            observingEnds.end(),
+            [](const auto& a, const auto& b) {
+                return a.first > b.first;
+            });
+
+        // Index minSites - 1 gives the end of the minSites-th
+        // latest-ending station.
+        const unsigned int clipEnd =
+            observingEnds[minSites - 1].first;
+
+        // Clip every station that ends after the boundary.
+        for (const auto& entry : observingEnds) {
+            const unsigned int end = entry.first;
+            const unsigned long idx = entry.second;
+
+            if (end <= clipEnd) {
+                continue;
+            }
+
+            const unsigned int start =
+                times.getObservingTime(idx, Timestamp::start);
+
+            // Avoid creating a zero-length observation.
+            if (clipEnd > start) {
+                times.setObservingTime(
+                    idx,
+                    clipEnd,
+                    Timestamp::end);
+            }
+        }
+    }
+
+    // Refresh pointing vectors and rebuild baseline observations.
+    for (Scan& scan : scans) {
+        for (unsigned int s_id : scan.getStationIds()) {
+            const unsigned long idx =
+                *scan.findIdxOfStationId(s_id);
+
+            PointingVector& pv =
+                scan.referencePointingVector(idx);
+
+            pv.setTime(
+                scan.getTimes().getObservingTime(idx));
+
+            sol_.network_.refStation(s_id).calcAzEl_rigorous(
+                sol_.sourceList_.getSource(scan.getSourceId()),
+                pv);
+        }
+
+        scan.updateObservingTime();
+    }
+}
+
 
 std::string ModelBase::dump(size_t t0, size_t tf) const noexcept {
     std::ostringstream output;

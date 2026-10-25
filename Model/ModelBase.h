@@ -295,6 +295,12 @@ private:
     std::vector<Scan> readScans(void) const noexcept;
 
     /**
+     * @brief merges and extends scans where possible
+     * @author Hank Lewis
+     */
+    void packScans(std::vector<Scan>& scans) const noexcept;
+
+    /**
      * @brief constructs a tabular view of the schedule where each source is keyed by a different character
      * @author Hank Lewis
      * 
