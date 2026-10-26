@@ -319,6 +319,17 @@ int ScanTimes::removeUnnecessaryObservingTime( Timestamp ts ) {
 }
 
 
+void ScanTimes::removeOverheadBeforeObservation(
+    int idx, unsigned int observingStart) noexcept
+{
+    endOfLastScan_[idx] = observingStart;
+    endOfFieldSystemTime_[idx] = observingStart;
+    endOfSlewTime_[idx] = observingStart;
+    endOfIdleTime_[idx] = observingStart;
+    endOfPreobTime_[idx] = observingStart;
+}
+
+
 bool ScanTimes::reduceObservingTime( int idx, unsigned int time, Timestamp ts ) {
     switch ( ts ) {
         case Timestamp::start: {

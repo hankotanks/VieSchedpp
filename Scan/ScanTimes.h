@@ -585,6 +585,8 @@ class ScanTimes : public VieVS_Object {
      */
     int removeUnnecessaryObservingTime( Timestamp ts );
 
+    void removeOverheadBeforeObservation( int idx, unsigned int observingStart) noexcept;
+
 
    private:
     static unsigned long nextId;    ///< next id for this object type
