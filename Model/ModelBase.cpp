@@ -282,7 +282,7 @@ next:;
                 }
             }
             model_->update();
-            model_->reset(0);
+            // model_->reset(0);
             model_->setObjective(std::get<1>(obj[i]), std::get<2>(obj[i]));
             model_->update();
             if(std::get<3>(obj[i]) > 0) {
@@ -293,44 +293,6 @@ next:;
 #else
                 std::cout << "[info] Optimizing " << std::get<0>(obj[i]);
 #endif
-            // std::map<int, double> val;
-            // for(const auto q : sol_.getSources()) {
-            //     for(size_t t : sol_.getBlocks(t0, tf)) {
-            //         for(const Station& s : sol_.getStations(t, q)) {
-            //             auto var = getVar(Solution::Key::StaActive(&sol_, q, s, t));
-            //             val.emplace(var->index(), var->get(GRB_DoubleAttr_X));
-            //         }
-            //         for(const Baseline& b : sol_.getBaselines(t, q)) {
-            //             auto var = getVar(Solution::Key::BlnActive(&sol_, q, b, t));
-            //             val.emplace(var->index(), var->get(GRB_DoubleAttr_X));
-            //         }
-            //     }
-            // }
-            // for(const Station& s : sol_.getStations()) {
-            //     for(size_t c = 0; c < coverage_->cellCount(); ++c) {
-            //         auto var = getVar(Solution::Key::StaCoverage(&sol_, s, c));
-            //         val.emplace(var->index(), var->get(GRB_DoubleAttr_X));
-            //     }
-            // }
-            // model_->reset(1);
-            // for(const auto q : sol_.getSources()) {
-            //     for(size_t t : sol_.getBlocks(t0, tf)) {
-            //         for(const Station& s : sol_.getStations(t, q)) {
-            //             auto var = getVar(Solution::Key::StaActive(&sol_, q, s, t));
-            //             var->set(GRB_DoubleAttr_X, val[var->index()]);
-            //         }
-            //         for(const Baseline& b : sol_.getBaselines(t, q)) {
-            //             auto var = getVar(Solution::Key::BlnActive(&sol_, q, b, t));
-            //             var->set(GRB_DoubleAttr_X, val[var->index()]);
-            //         }
-            //     }
-            // }
-            // for(const Station& s : sol_.getStations()) {
-            //     for(size_t c = 0; c < coverage_->cellCount(); ++c) {
-            //         auto var = getVar(Solution::Key::StaCoverage(&sol_, s, c));
-            //         var->set(GRB_DoubleAttr_X, val[var->index()]);
-            //     }
-            // }
             model_->optimize();
             int status = model_->get(GRB_IntAttr_Status);
             if(status == GRB_INFEASIBLE) {
@@ -353,7 +315,6 @@ next:;
 #else
                 std::cout << "[info] No optimal solution found between " << t0 * sol_.blockLength_ << " and " << tf * sol_.blockLength_;
 #endif
-                return false;
             }
             this->post({ .tp = tp, .tn = tn, .t0 = t0, .tf = tf }, std::get<0>(obj[i]));
         }
@@ -575,105 +536,6 @@ void ModelBase::loadScans(std::vector<Scan>& scans) {
             while(t1f > 0 && !sol_.getSol(Solution::Key::StaActive(&sol_, q, s1, t1f))) --t1f;
             while(t2f > 0 && !sol_.getSol(Solution::Key::StaActive(&sol_, q, s2, t2f))) --t2f;
             // check that these are possible, if they aren't then advance by one segment
-#if 0
-while (t10 < sol_.blockCount_) {
-    // Find the next block where q is active.
-    while (t10 < sol_.blockCount_ &&
-           !sol_.getSol(Solution::Key::StaActive(&sol_, q, s1, t10)))
-        ++t10;
-
-    if (t10 >= sol_.blockCount_)
-        break;
-
-    size_t requiredStart = t10;
-
-    // Check every preceding active source.
-    for (size_t t = t10; t-- > 0;) {
-        for (const auto q2 : sol_.getSources()) {
-            if (q2->getId() == q->getId())
-                continue;
-
-            auto active = sol_.getSol(
-                Solution::Key::StaActive(&sol_, q2, s1, t));
-          
-            if (!active || !*active)
-                continue;
-
-            const size_t t_slew = sol_.getSlew(
-                Solution::Key::StaActive(&sol_, q2, s1, t + 1),
-                Solution::Key::StaActive(&sol_, q, s1, t10));
-
-            if(t10 == 30) {
-                // std::cout << s1.getName() << ","<< s2.getName()<< "," << t_slew <<","<<q2->getName()<<","<<t<<","<<q->getName()<<","<<t10<<std::endl;
-            }
-            if ((s1.getName() == "ZELENCHK" || s1.getAlternativeName() == "ZELENCHK") &&
-                (q2->getName() == "1144+402" || q2->getAlternativeName()  == "1144+402") &&
-                (q->getName() == "3C371" || q->getAlternativeName() == "3C371") &&
-                t == 23 && t10 == 30) {
-                std::cout << "WARM START slew=" << t_slew << '\n';
-            }
-
-            // constrSlew requires t10 - t > t_slew.
-            if (t10 - t <= t_slew) {
-                requiredStart = std::max(requiredStart, t + t_slew + 1);
-            }
-        }
-    }
-
-    if (requiredStart == t10)
-        break; // No slew conflict.
-
-    t10 = requiredStart;
-}
-while (t20 < sol_.blockCount_) {
-    // Find the next block where q is active.
-    while (t20 < sol_.blockCount_ &&
-           !sol_.getSol(Solution::Key::StaActive(&sol_, q, s2, t20)))
-        ++t20;
-
-    if (t20 >= sol_.blockCount_)
-        break;
-
-    size_t requiredStart = t20;
-
-    // Check every preceding active source.
-    for (size_t t = t20; t-- > 0;) {
-        for (const auto q2 : sol_.getSources()) {
-            if (q2->getId() == q->getId())
-                continue;
-
-            auto active = sol_.getSol(
-                Solution::Key::StaActive(&sol_, q2, s2, t));
-             
-            if (!active || !*active)
-                continue;
-
-            const size_t t_slew = sol_.getSlew(
-                Solution::Key::StaActive(&sol_, q2, s2, t + 1),
-                Solution::Key::StaActive(&sol_, q, s2, t20));
-            if(t20 == 30) {
-                // std::cout << s1.getName() <<","<< s2.getName() << "," << t_slew <<","<<q2->getName()<<","<<t<<","<<q->getName()<<","<<t20<<std::endl;
-            }
-            if ((s2.getName() == "ZELENCHK" || s2.getAlternativeName() == "ZELENCHK") &&
-                (q2->getName() == "1144+402" || q2->getAlternativeName()  == "1144+402") &&
-                (q->getName() == "3C371" || q->getAlternativeName() == "3C371") &&
-                t == 23 && t20 == 30) {
-                std::cout << "WARM START slew=" << t_slew << '\n';
-            }
-
-            // constrSlew requires t20 - t > t_slew.
-            if (t20 - t <= t_slew) {
-                requiredStart = std::max(requiredStart, t + t_slew + 1);
-            }
-        }
-    }
-
-    if (requiredStart == t20)
-        break; // No slew conflict.
-
-    t20 = requiredStart;
-}
-#else
             if(sol_.getSol(Solution::Key::StaActive(&sol_, q, s1, t10))) {
                 for(const auto q2 : sol_.getSources()) {
                     if(q->getId() == q2->getId()) continue;
@@ -736,7 +598,7 @@ terminate_s1:;
             }
 terminate_s2:;
             while(t20 < sol_.blockCount_ && !sol_.getSol(Solution::Key::StaActive(&sol_, q, s2, t20))) ++t20;
-#endif
+            
             // check if any starts exceed the ends
             if(t10 >= t1f) continue;
             if(t20 >= t2f) continue;
@@ -811,269 +673,6 @@ terminate_s2:;
 #endif
 }
 
-#if 0
-boost::optional<bool> ModelBase::ScanBuilder::append(const ModelBase* model, std::shared_ptr<const VieVS::AbstractSource> const q, 
-    Station& s, size_t t) noexcept {
-    if(qId != q->getId()) return boost::none;
-    try {
-        size_t& end = sData.at(s.getId()).second;
-        if(end == t) {
-            ++end;
-            return true;
-        }
-        return false;
-    } catch(...) {
-        auto pv = model->sol_.getPointingVector(Solution::Key::StaActive(&model->sol_, q, s, t));
-        sData.insert(std::make_pair(s.getId(), std::make_pair(*pv, t + 1)));
-        if(t == 0) sContinuation.insert(s.getId());
-        return true;
-    }
-}
-
-Scan ModelBase::ScanBuilder::finish(const ModelBase* model, 
-    const std::vector<unsigned int>& slewTime, 
-    std::vector<unsigned int>& endOfLastScan) const noexcept {
-    std::vector<PointingVector> pointingVectors;
-    std::vector<PointingVector> pointingVectorsEnd;
-    // std::vector<unsigned int> endOfLastScan;
-
-    typedef std::pair<const unsigned long, std::pair<PointingVector, size_t>> Entry;
-    std::transform(sData.begin(), sData.end(), std::back_inserter(pointingVectors),
-        [](const Entry& entry) { return entry.second.first; });
-
-    size_t blockLength = model->sol_.blockLength_;
-    // std::transform(sData.begin(), sData.end(), std::back_inserter(endOfLastScan),
-    //     [blockLength](const Entry& entry) { return entry.second.second * blockLength; });
-
-    pointingVectorsEnd.reserve(pointingVectors.size());
-    for(size_t i = 0; i < pointingVectors.size(); ++i) {
-        const PointingVector& pv0 = pointingVectors[i];
-
-        PointingVector pve(pv0.getStaid(), qId);
-        pve.setTime(sData.at(pv0.getStaid()).second * blockLength);
-
-        Station& s = model->sol_.network_.refStation(pv0.getStaid());
-        std::shared_ptr<const VieVS::AbstractSource> const q = model->sol_.sourceList_.getSource(qId);
-        s.calcAzEl_rigorous(q, pve);
-
-        pointingVectorsEnd.push_back(pve);
-    }
-
-    std::vector<unsigned int> fieldSystemTime;
-    std::vector<unsigned int> preob;
-    std::vector<unsigned int> scanStart;
-    std::vector<unsigned int> observingTimes;
-
-    for(size_t i = 0; i < pointingVectors.size(); ++i) {
-        const PointingVector& pv0 = pointingVectors[i];
-        const PointingVector& pve = pointingVectorsEnd[i];
-
-        const Station& s = model->sol_.network_.getStation(pv0.getStaid());
-        if(pv0.getTime() == 0 || sContinuation.count(pv0.getStaid()) > 0) {
-            fieldSystemTime.push_back(0);
-            preob.push_back(0);
-        } else {
-            fieldSystemTime.push_back(s.getPARA().systemDelay);
-            preob.push_back(s.getPARA().preob);
-        }
-        
-        scanStart.push_back(pv0.getTime());
-        observingTimes.push_back(pve.getTime());
-    }
-
-    std::vector<Observation> obs;
-    for(size_t i = 0; i < pointingVectors.size(); ++i) {
-        const PointingVector& pvi = pointingVectors[i];
-
-        for(size_t j = i + 1; j < pointingVectors.size(); ++j) {
-            const PointingVector& pvj = pointingVectors[j];
-            
-            const std::pair<unsigned long, unsigned long> staids(pvi.getStaid(), pvj.getStaid());
-            unsigned long blid = model->sol_.network_.getBaseline(staids).getId();
-
-            unsigned int startTime = std::max(pvi.getTime(), pvj.getTime());
-            unsigned int endTime = std::min(pointingVectorsEnd[i].getTime(), pointingVectorsEnd[j].getTime());
-            if(startTime >= endTime) continue;
-            unsigned int observingTime = endTime - startTime;
-
-            obs.emplace_back(blid, pvi.getStaid(), pvj.getStaid(), qId, startTime, observingTime);
-        }
-    }
-
-    Scan scan(pointingVectors, endOfLastScan, Scan::ScanType::standard);
-    scan.setPointingVectorsEndtime(pointingVectorsEnd);
-
-    ScanTimes& times = scan.referenceTime();
-    times.setEndOfLastScan( endOfLastScan );
-    for ( int i = 0; i < slewTime.size(); ++i ) {
-        times.addTimes( i, fieldSystemTime[i], slewTime.at( static_cast<unsigned long>( i ) ), 0 );
-        times.setObservingTime( i, observingTimes[i], Timestamp::end );
-    }
-    times.setObservingStarts( scanStart );
-
-    std::vector<bool> excl;
-    for(const auto& sEntry : sData) {
-        excl.push_back(sContinuation.count(sEntry.first) > 0);
-    }
-
-    bool valid = times.setPreobTime( preob, excl );
-    if(!valid) {
-#ifdef VIESCHEDPP_LOG
-        BOOST_LOG_TRIVIAL( error ) << "Failed to set ScanTimes";
-#else
-        std::cout << "[error] Failed to set ScanTimes";
-#endif
-    }
-
-    scan.setObservations(obs);
-    
-    return scan;
-}
-
-void ModelBase::ActiveScans::append(std::shared_ptr<const VieVS::AbstractSource> const q, 
-    Station& s, size_t t) noexcept {
-    boost::optional<const ModelBase::ScanBuilder&> scanContinuation = boost::none;
-    for(ModelBase::ScanBuilder& scan : scans_) {
-        if(boost::optional<bool> ret = scan.append(model_, q, s, t)) {
-            if(*ret) return;
-            scanContinuation = scan;
-        }
-        // if(scan.append(model_, q, s, t)) return;
-    }
-
-    PointingVector pv(s.getId(), q->getId());
-    pv.setTime(t * model_->sol_.blockLength_);
-    s.calcAzEl_rigorous(q, pv);
-
-    ModelBase::ScanBuilder scan;
-    scan.qId = q->getId();
-    scan.sData.insert(std::make_pair(s.getId(), std::make_pair(pv, t + 1)));
-
-    if(scanContinuation) {
-        for(const auto& sEntry : scanContinuation->sData) {
-            if(sEntry.first == s.getId() || sEntry.second.second <= t) continue;
-            scan.sContinuation.insert(sEntry.first);
-
-            const auto& sData = sEntry.second;
-
-            PointingVector pv(sEntry.first, q->getId());
-            pv.setTime(t * model_->sol_.blockLength_);
-            s.calcAzEl_rigorous(q, pv);
-
-            scan.sData.insert(std::make_pair(sEntry.first, std::make_pair(pv, t + 1)));
-        }
-
-        auto it = std::find_if(scans_.begin(), scans_.end(),
-            [&](const ModelBase::ScanBuilder& sb) { return sb.qId == scanContinuation->qId; });
-        if(it != scans_.end()) {
-            scansToAppend_.push_back(std::move(*it));
-            scans_.erase(it);
-        }
-    }
-
-    scans_.emplace_back(scan);
-}
-
-void ModelBase::ActiveScans::updateScans(std::vector<Scan>& scans, size_t t) {
-    for(auto& scan : scansToAppend_) {
-        std::vector<unsigned int> slewTime = ModelBase::ActiveScans::computeSlewTime(scan, scans);
-        std::vector<unsigned int> endOfLastScan = ModelBase::ActiveScans::computeEndOfLastScan(scan, scans);
-        scans.push_back(scan.finish(model_, slewTime, endOfLastScan));
-    }
-    scansToAppend_.clear();
-
-    std::vector<size_t> remove;
-    for(size_t i = 0, j = 0; i < scans_.size(); ++i, j = 0) {
-        for(const auto& sEntry : scans_[i].sData) {
-            const auto& sData = sEntry.second;
-            if(sData.second > t) ++j;
-        }
-
-        if(j < 2) {
-            remove.emplace_back(i);
-
-            std::vector<unsigned int> slewTime = ModelBase::ActiveScans::computeSlewTime(scans_[i], scans);
-            std::vector<unsigned int> endOfLastScan = ModelBase::ActiveScans::computeEndOfLastScan(scans_[i], scans);
-            Scan scan = scans_[i].finish(model_, slewTime, endOfLastScan);
-            scans.emplace_back(scan);
-        }
-    }
-
-    std::reverse(remove.begin(), remove.end());
-    for(size_t i : remove) {
-        scans_.erase(scans_.begin() + i);
-    }
-}
-
-std::vector<unsigned int> ModelBase::ActiveScans::computeSlewTime(const ModelBase::ScanBuilder& scan, 
-    const std::vector<Scan>& scans) noexcept {
-    std::vector<unsigned int> slewTime;
-    for(const auto& sEntryInner : scan.sData) {
-        const Station& s = model_->sol_.network_.getStation(sEntryInner.first);
-        if(scan.sContinuation.count(sEntryInner.first) > 0) {
-            slewTime.push_back(0);
-        } else {
-            boost::optional<PointingVector> pv0 = boost::none;
-            for(size_t i = scans.size(); i-- > 0;) {
-                if(auto j = scans[i].findIdxOfStationId(sEntryInner.first)) {
-                    pv0 = scans[i].getPointingVector(*j, Timestamp::end);
-                    break;
-                }
-            }
-            unsigned int slew = 0;
-            if(pv0) {
-                slew = s.getAntenna().slewTime(*pv0, sEntryInner.second.first);
-            }
-            slewTime.push_back(slew);
-        }
-    }
-
-    return slewTime;
-}
-
-std::vector<unsigned int> ModelBase::ActiveScans::computeEndOfLastScan(const ModelBase::ScanBuilder& scan, 
-    const std::vector<Scan>& scans) noexcept {
-    std::vector<unsigned int> endOfLastScan;
-    for(const auto& sEntryInner : scan.sData) {
-        const Station& s = model_->sol_.network_.getStation(sEntryInner.first);
-        if(scan.sContinuation.count(sEntryInner.first) > 0) {
-            endOfLastScan.push_back(0);
-        } else {
-            unsigned int eols = 0;
-            for(size_t i = scans.size(); i-- > 0;) {
-                if(auto j = scans[i].findIdxOfStationId(sEntryInner.first)) {
-                    eols = scans[i].getPointingVector(*j, Timestamp::end).getTime();
-                    break;
-                }
-            }
-            
-            endOfLastScan.push_back(eols);
-        }
-    }
-
-    return endOfLastScan;
-}
-
-std::vector<Scan> ModelBase::readScans(void) const noexcept {
-    std::vector<Scan> scans;
-
-    ModelBase::ActiveScans scansActive(this);
-    for(size_t t = 0; t <= sol_.blockCount_; ++t) {
-        for(Station& s : sol_.network_.refStations()) {
-            for(const auto q : sol_.getSources()) {
-                if(auto sol = sol_.getSol(Solution::Key::StaActive(&sol_, q, s, t))) {
-                    if(*sol) scansActive.append(q, s, t);
-                }
-            }
-        }
-
-        scansActive.updateScans(scans, t);
-    }
-
-    return scans;
-}
-#endif
-
 std::vector<Scan> ModelBase::readScans(void) const noexcept {
     std::map<unsigned long, char> qId;
     for(const unsigned long q : sol_.sourceMask_) {
@@ -1106,94 +705,47 @@ std::vector<Scan> ModelBase::readScans(void) const noexcept {
     }
 
     std::map<unsigned int, std::vector<Interval>> bySource;
-
-    for (const auto& entry : intervals) {
-        for (const Interval& interval : entry.second) {
+    for(const auto& entry : intervals) {
+        for(const Interval& interval : entry.second) {
             bySource[interval.q].push_back(interval);
         }
     }
 
-    auto printGroup = [&](unsigned int q, const ActiveGroup& group) {
-        if (group.stations.empty()) {
-            return;
-        }
-
-        size_t first = std::numeric_limits<size_t>::max();
-        size_t last = 0;
-
-        for (const auto& entry : group.stations) {
-            first = std::min(first, entry.second.start);
-            last = std::max(last, entry.second.end);
-        }
-
-        std::cout << "["
-                << sol_.sourceList_.getSource(q)->getName()
-                << ", " << first
-                << ", " << last
-                << "]\n";
-
-        for (const Station& station : sol_.network_.getStations()) {
-            auto it = group.stations.find(station.getId());
-            if (it == group.stations.end()) {
-                continue;
-            }
-
-            const Interval& interval = it->second;
-            std::cout << station.getName() << (group.continuations.count(station.getId()) > 0 ? "(continuation)" : "(initial)") << '\n';
-
-            for (size_t t = first; t <= last; ++t) {
-                std::cout << ((t >= interval.start && t <= interval.end)
-                                ? qId.at(q)
-                                : ' ');
-            }
-
-            std::cout << '\n';
-        }
-    };
-
     std::vector<std::pair<unsigned int, ActiveGroup>> groups;
-    for (auto& sourceEntry : bySource) {
+    for(auto& sourceEntry : bySource) {
         const unsigned int q = sourceEntry.first;
         auto& sourceIntervals = sourceEntry.second;
-
-        std::sort(sourceIntervals.begin(), sourceIntervals.end(),
-            [](const Interval& a, const Interval& b) {
-                if (a.start != b.start) return a.start < b.start;
-                if (a.end != b.end) return a.end < b.end;
-                return a.s < b.s;
-            });
+        std::sort(sourceIntervals.begin(), sourceIntervals.end(), [](const Interval& a, const Interval& b) {
+            if(a.start != b.start) return a.start < b.start;
+            if(a.end != b.end) return a.end < b.end;
+            return a.s < b.s;
+        });
 
         ActiveGroup current;
         bool haveGroup = false;
 
         size_t i = 0;
         while (i < sourceIntervals.size()) {
-            // Process all station starts at this epoch together.
             const size_t epoch = sourceIntervals[i].start;
             size_t j = i;
-
-            while (j < sourceIntervals.size() &&
+            while(j < sourceIntervals.size() &&
                 sourceIntervals[j].start == epoch) {
                 ++j;
             }
 
-            // Determine whether this epoch introduces a new station
-            // into an observation that is already active.
+            // does a station join a pre-existing scan
             bool lateJoin = false;
-
-            if (haveGroup) {
+            if(haveGroup) {
                 bool observationActive = false;
-
-                for (const auto& entry : current.stations) {
-                    if (entry.second.end >= epoch) {
+                for(const auto& entry : current.stations) {
+                    if(entry.second.end >= epoch) {
                         observationActive = true;
                         break;
                     }
                 }
-
-                if (observationActive) {
-                    for (size_t k = i; k < j; ++k) {
-                        if (current.stations.find(sourceIntervals[k].s) ==
+                if(observationActive) {
+                    for(size_t k = i; k < j; ++k) {
+                        if(current.stations.find(sourceIntervals[k].s) ==
                             current.stations.end()) {
                             lateJoin = true;
                             break;
@@ -1202,42 +754,34 @@ std::vector<Scan> ModelBase::readScans(void) const noexcept {
                 }
             }
 
-            if (haveGroup && !lateJoin) {
+            if(haveGroup && !lateJoin) {
                 bool observationActive = false;
-
-                for (const auto& entry : current.stations) {
-                    if (entry.second.end >= epoch) {
+                for(const auto& entry : current.stations) {
+                    if(entry.second.end >= epoch) {
                         observationActive = true;
                         break;
                     }
                 }
-
-                if (!observationActive) {
+                if(!observationActive) {
                     groups.emplace_back(q, current);
                     current = ActiveGroup{};
                     haveGroup = false;
                 }
             }
 
-            if (lateJoin) {
+            if(lateJoin) {
                 ActiveGroup continuation;
-
-                // Close the initial group immediately before the join.
-                for (auto it = current.stations.begin();
+                // close ongoing scan at this point, then start a new one with this new participant
+                for(auto it = current.stations.begin();
                     it != current.stations.end();) {
                     Interval& oldInterval = it->second;
-
-                    if (oldInterval.end >= epoch) {
+                    if(oldInterval.end >= epoch) {
                         Interval continued = oldInterval;
                         continued.start = epoch;
-
                         oldInterval.end = epoch - 1;
-
-                        continuation.stations.emplace(
-                            it->first, continued);
+                        continuation.stations.emplace(it->first, continued);
                         continuation.continuations.insert(it->first);
                     }
-
                     if (oldInterval.start > oldInterval.end) {
                         it = current.stations.erase(it);
                     } else {
@@ -1249,21 +793,17 @@ std::vector<Scan> ModelBase::readScans(void) const noexcept {
                 current = std::move(continuation);
             }
 
-            // Add the stations starting at this epoch. This is done
-            // after splitting so simultaneous joins stay in one group.
-            for (size_t k = i; k < j; ++k) {
+            // add (and readd) stations
+            for(size_t k = i; k < j; ++k) {
                 const Interval& interval = sourceIntervals[k];
                 auto it = current.stations.find(interval.s);
-
-                if (it == current.stations.end()) {
+                if(it == current.stations.end()) {
                     current.stations.emplace(interval.s, interval);
                 } else {
                     // Merge adjacent or overlapping intervals for
                     // the same station, if encountered.
-                    it->second.start = std::min(
-                        it->second.start, interval.start);
-                    it->second.end = std::max(
-                        it->second.end, interval.end);
+                    it->second.start = std::min(it->second.start, interval.start);
+                    it->second.end = std::max(it->second.end, interval.end);
                 }
             }
 
@@ -1271,7 +811,7 @@ std::vector<Scan> ModelBase::readScans(void) const noexcept {
             i = j;
         }
 
-        // Do not forget the last group: it may still be active.
+        // handle final group
         if (haveGroup) {
             groups.emplace_back(q, current);
         }
@@ -1377,485 +917,94 @@ void dumpTimes(const ScanTimes& times, unsigned int idx) {
     std::cout << start << ", " << slew << ", " << idle << ", " << preob << ", " << obs << ", " << end << std::endl;
 }
 
-
-#if 0
-void ModelBase::packScans(std::vector<Scan>& scans) const noexcept
-{
-    
+void ModelBase::packScans(std::vector<Scan>& scans) const noexcept {
     std::map<unsigned int, std::vector<size_t>> scansByStation;
-
-    for (const Station& station : sol_.network_.getStations()) {
+    for(const Station& station : sol_.network_.getStations()) {
         scansByStation.emplace(station.getId(), std::vector<size_t>{});
     }
 
-    for (size_t i = 0; i < scans.size(); ++i) {
-        for (unsigned int s_id : scans[i].getStationIds()) {
+    for(size_t i = 0; i < scans.size(); ++i) {
+        for(unsigned int s_id : scans[i].getStationIds()) {
             auto it = scansByStation.find(s_id);
-            if (it != scansByStation.end()) {
-                it->second.push_back(i);
-            }
+            if(it != scansByStation.end()) it->second.push_back(i);
         }
     }
 
-    // Sort each station's scans chronologically.
-    for (auto& entry : scansByStation) {
+    // sort each station's scan by time
+    for(auto& entry : scansByStation) {
         const unsigned int s_id = entry.first;
         auto& stationScans = entry.second;
-
-        std::sort(
-            stationScans.begin(),
-            stationScans.end(),
-            [&scans, s_id](size_t a, size_t b) {
-                const auto idxA = *scans[a].findIdxOfStationId(s_id);
-                const auto idxB = *scans[b].findIdxOfStationId(s_id);
-
-                const unsigned int startA =
-                    scans[a].getTimes().getFieldSystemTime(idxA);
-                const unsigned int startB =
-                    scans[b].getTimes().getFieldSystemTime(idxB);
-
-                return startA != startB ? startA < startB : a < b;
-            });
+        std::sort(stationScans.begin(), stationScans.end(), [&scans, s_id](size_t a, size_t b) {
+            const auto s_idx_a = *scans[a].findIdxOfStationId(s_id);
+            const auto s_idx_b = *scans[b].findIdxOfStationId(s_id);
+            const unsigned int start_a = scans[a].getTimes().getObservingTime(s_idx_a);
+            const unsigned int start_b = scans[b].getTimes().getObservingTime(s_idx_b);
+            return start_a != start_b ? start_a < start_b : a < b;
+        });
     }
 
-    // Refresh either pointing vector using its actual observation boundary.
-    auto refreshPointingVector =
-        [this](Scan& scan, unsigned int s_id, Timestamp ts) {
-            const unsigned long idx = *scan.findIdxOfStationId(s_id);
+    // build downtime map, same as in Solution.cpp
+    // there's a better way to handle downtime, but at least it works
+    std::map<unsigned int, std::vector<std::pair<unsigned int, unsigned int>>> downtime;
+    for(Station& station : sol_.network_.refStations()) {
+        const unsigned int s_id = station.getId();
 
-            PointingVector& pv = scan.referencePointingVector(idx, ts);
-
-            pv.setTime(scan.getTimes().getObservingTime(idx, ts));
-
-            sol_.network_.refStation(s_id).calcAzEl_rigorous(
-                sol_.sourceList_.getSource(scan.getSourceId()),
-                pv);
-        };
-
-    // Grow observations forward, but never consume time needed for slewing.
-    for (const auto& entry : scansByStation) {
-        const unsigned int s_id = entry.first;
-        const auto& stationScans = entry.second;
-
-        Station& station = sol_.network_.refStation(s_id);
-
-        bool isFirstScan = true;
-
-        const unsigned int constTimes =
-            station.getPARA().systemDelay + station.getPARA().preob;
-
-        for (size_t i = 0; i + 1 < stationScans.size(); ++i) {
-            Scan& current = scans[stationScans[i]];
-            Scan& next = scans[stationScans[i + 1]];
-
-            ScanTimes& currentTimes = current.referenceTime();
-            ScanTimes& nextTimes = next.referenceTime();
-
-            const unsigned long currentIdx =
-                *current.findIdxOfStationId(s_id);
-            const unsigned long nextIdx =
-                *next.findIdxOfStationId(s_id);
-
-            const unsigned int originalEnd =
-                currentTimes.getObservingTime(
-                    currentIdx, Timestamp::end);
-
-            const unsigned int nextStart =
-                nextTimes.getObservingTime(
-                    nextIdx, Timestamp::start);
-
-            const unsigned int nextIdle =
-                nextTimes.getIdleDuration(nextIdx);
-
-            if (nextIdle == 0 || nextStart <= originalEnd) {
-                continue;
+        std::map<size_t, bool> events;
+        for(const auto& event : station.refParaForMultiScheduling()) {
+            if(event.PARA.available) {
+                events.emplace((event.time + sol_.blockLength_ - 1) / sol_.blockLength_, true);
+            } else {
+                events.emplace(event.time / sol_.blockLength_, false);
             }
+        }
 
-            const bool sameSource =
-                current.getSourceId() == next.getSourceId();
-
-            if (sameSource) {
-                // For the same source, no angular slew is required.
-                // Consume only available idle time; do not move either
-                // observation boundary past the other.
-                const unsigned int gap = nextStart - originalEnd;
-                const unsigned int shift = std::min(nextIdle, gap);
-
-                if (shift == 0) {
-                    continue;
-                }
-
-                // Respect minNumberOfSites for the current scan. Limit this
-                // station's extension to the latest endpoint that still allows
-                // the required number of stations to remain co-observing.
-                const unsigned int minSites =
-                    sol_.sourceList_.getSource(current.getSourceId())
-                        ->getPARA().minNumberOfSites;
-
-                unsigned int maxShift = shift;
-
-                if (current.getStationIds().size() >= 2) {
-                    std::vector<unsigned int> otherEnds;
-                    otherEnds.reserve(current.getStationIds().size() - 1);
-
-                    for (unsigned int otherId : current.getStationIds()) {
-                        if (otherId == s_id) {
-                            continue;
-                        }
-
-                        const unsigned long otherIdx =
-                            *current.findIdxOfStationId(otherId);
-
-                        otherEnds.push_back(
-                            currentTimes.getObservingTime(
-                                otherIdx, Timestamp::end));
-                    }
-
-                    std::sort(
-                        otherEnds.begin(),
-                        otherEnds.end(),
-                        std::greater<unsigned int>());
-
-                    // With N stations, the second-longest endpoint overall is:
-                    //   - the longest other endpoint if this station ends first;
-                    //   - the second-longest other endpoint if this station ends first
-                    //     only after that endpoint, depending on the current ordering.
-                    //
-                    // Limit this station to the longest other endpoint. This guarantees
-                    // that at least two stations overlap until the resulting endpoint.
-                    if (!otherEnds.empty()) {
-                        const unsigned int limitingEnd = otherEnds.front();
-
-                        maxShift = std::min(
-                            maxShift,
-                            limitingEnd > originalEnd
-                                ? limitingEnd - originalEnd
-                                : 0U);
-                    }
-                }
-
-                if (maxShift == 0) {
-                    continue;
-                }
-
-                const unsigned int newEnd = originalEnd + maxShift;
-
-                currentTimes.setObservingTime(
-                    currentIdx, newEnd, Timestamp::end);
-
-                refreshPointingVector(current, s_id, Timestamp::end);
-
-                // Release exactly the idle time consumed by the extended scan.
-                nextTimes.setIdleTime(nextIdx, nextIdle - maxShift);
-
-                continue;
+        bool available = true;
+        size_t prev = 0;
+        bool has_prev = false;
+        for(const auto& ev : events) {
+            const auto& block = std::get<0>(ev);
+            const auto& available_new = std::get<1>(ev);
+            if(has_prev && !available) {
+                const auto block_start = static_cast<unsigned long long>(prev) * sol_.blockLength_;
+                const auto block_end = static_cast<unsigned long long>(block) * sol_.blockLength_;
+                downtime[s_id].emplace_back(static_cast<unsigned int>(block_start), static_cast<unsigned int>(block_end));
             }
+            available = available_new;
+            prev = block;
+            has_prev = true;
+        }
 
-            // Save the original endpoint vector so that a rejected trial
-            // can restore the original pointing state.
-            const PointingVector originalEndPV =
-                current.getPointingVector(
-                    static_cast<int>(currentIdx), Timestamp::end);
-
-            auto slewIsFeasible =
-                [&](unsigned int candidateEnd) -> bool {
-                    if (candidateEnd >= nextStart) {
-                        return false;
-                    }
-
-                    currentTimes.setObservingTime(
-                        currentIdx, candidateEnd, Timestamp::end);
-
-                    refreshPointingVector(current, s_id, Timestamp::end);
-                    refreshPointingVector(next, s_id, Timestamp::start);
-
-                    const PointingVector& thisEnd =
-                        current.getPointingVector(
-                            static_cast<int>(currentIdx), Timestamp::end);
-
-                    const PointingVector& nextStartPV =
-                        next.getPointingVector(
-                            static_cast<int>(nextIdx), Timestamp::start);
-
-                    const auto oslewtime = isFirstScan
-                        ? boost::optional<unsigned int>(0)
-                        : station.slewTime(
-                            thisEnd,
-                            nextStartPV,
-                            currentTimes.getObservingDuration(currentIdx),
-                            true);  // explicitly ignore station's firstScan parameter
-
-                    isFirstScan = false;
-
-                    // Match the validator: an invalid slew is not feasible.
-                    if (!oslewtime.is_initialized()) {
-                        return false;
-                    }
-
-                    const unsigned int slewTime = *oslewtime;
-
-                    // Use wide arithmetic to avoid overflow.
-                    const unsigned long long required =
-                        static_cast<unsigned long long>(slewTime) +
-                        constTimes;
-
-                    const unsigned long long available =
-                        static_cast<unsigned long long>(nextStart) -
-                        candidateEnd;
-
-                    return available >= required;
-                };
-
-            // A candidate changes the current observation duration and its
-            // pointing position, which may change the required slew time.
-            unsigned int shift = nextIdle;
-            bool converged = false;
-            constexpr unsigned int maxIterations = 32;
-
-            for (unsigned int iteration = 0;
-                 iteration < maxIterations;
-                 ++iteration) {
-                const unsigned long long candidateEnd64 =
-                    static_cast<unsigned long long>(originalEnd) + shift;
-
-                if (candidateEnd64 >= nextStart ||
-                    candidateEnd64 >
-                        std::numeric_limits<unsigned int>::max()) {
-                    shift = 0;
-                }
-
-                const unsigned int candidateEnd =
-                    originalEnd + shift;
-
-                if (!slewIsFeasible(candidateEnd)) {
-                    // Restore the original boundary before reducing the
-                    // candidate. The next trial recalculates the slew.
-                    currentTimes.setObservingTime(
-                        currentIdx, originalEnd, Timestamp::end);
-
-                    refreshPointingVector(current, s_id, Timestamp::end);
-
-                    if (shift == 0) {
-                        break;
-                    }
-
-                    // Fixed-point update: remove at least one second.
-                    const unsigned int oldShift = shift;
-                    --shift;
-
-                    if (shift == oldShift) {
-                        break;
-                    }
-
-                    continue;
-                }
-
-                // Recompute the maximum permissible shift using the slew
-                // at this candidate boundary.
-                const PointingVector& thisEnd =
-                    current.getPointingVector(
-                        static_cast<int>(currentIdx), Timestamp::end);
-
-                const PointingVector& nextStartPV =
-                    next.getPointingVector(
-                        static_cast<int>(nextIdx), Timestamp::start);
-
-                const auto oslewtime = station.slewTime(
-                    thisEnd,
-                    nextStartPV,
-                    currentTimes.getObservingDuration(currentIdx));
-
-                if (!oslewtime.is_initialized()) {
-                    currentTimes.setObservingTime(
-                        currentIdx, originalEnd, Timestamp::end);
-                    refreshPointingVector(current, s_id, Timestamp::end);
-                    shift = 0;
-                    break;
-                }
-
-                const unsigned long long required =
-                    static_cast<unsigned long long>(*oslewtime) +
-                    constTimes;
-
-                const unsigned long long available =
-                    static_cast<unsigned long long>(nextStart) -
-                    candidateEnd;
-
-                const unsigned int safeShift =
-                    available >= required
-                        ? static_cast<unsigned int>(
-                              std::min<unsigned long long>(
-                                  nextIdle,
-                                  static_cast<unsigned long long>(shift) +
-                                      available - required))
-                        : 0;
-
-                if (safeShift == shift) {
-                    converged = true;
-                    break;
-                }
-
-                // A slew can vary with the candidate endpoint, so repeat.
-                // Never increase a candidate after a failed feasibility test.
-                shift = std::min(shift, safeShift);
-
-                currentTimes.setObservingTime(
-                    currentIdx, originalEnd, Timestamp::end);
-
-                refreshPointingVector(current, s_id, Timestamp::end);
-            }
-
-            if (!converged) {
-                // Do not apply an unverified timing modification.
-                currentTimes.setObservingTime(
-                    currentIdx, originalEnd, Timestamp::end);
-
-                // Restore the original end vector as well as its timestamp.
-                PointingVector& pv =
-                    current.referencePointingVector(
-                        static_cast<int>(currentIdx), Timestamp::end);
-
-                pv = originalEndPV;
-
-                continue;
-            }
-
-            // Reapply and verify the converged boundary.
-            const unsigned int finalEnd = originalEnd + shift;
-
-            if (!slewIsFeasible(finalEnd)) {
-                currentTimes.setObservingTime(
-                    currentIdx, originalEnd, Timestamp::end);
-
-                PointingVector& pv =
-                    current.referencePointingVector(
-                        static_cast<int>(currentIdx), Timestamp::end);
-
-                pv = originalEndPV;
-
-                continue;
-            }
-
-            // The current observation grows by shift seconds, while the
-            // next scan's idle duration shrinks by the same amount.
-            nextTimes.setIdleTime(nextIdx, nextIdle - shift);
+        if(has_prev && !available) {
+            const auto block_start = static_cast<unsigned long long>(prev) * sol_.blockLength_;
+            downtime[s_id].emplace_back(static_cast<unsigned int>(block_start), std::numeric_limits<unsigned int>::max());
         }
     }
 
-    // Clip the latest observation ends so that at least minNumberOfSites
-    // stations remain co-observing.
-    for (Scan& scan : scans) {
-        ScanTimes& times = scan.referenceTime();
-
-        // At least two stations are required for this operation.
-        if (scan.getStationIds().size() < 2) {
-            continue;
+    // helper to check if a scan intersects a down period
+    auto crossesDowntime = [&downtime](unsigned int s_id, unsigned int start, unsigned int end) -> bool {
+        const auto it = downtime.find(s_id);
+        if(it == downtime.end() || start >= end) return false;
+        for(const auto& entry : it->second) {
+            if(start < std::get<1>(entry) && end > std::get<0>(entry)) return true;
         }
+        return false;
+    };
 
-        std::vector<std::pair<unsigned int, unsigned long>> observingEnds;
-        observingEnds.reserve(scan.getStationIds().size());
-
-        for (unsigned int s_id : scan.getStationIds()) {
-            const unsigned long idx = *scan.findIdxOfStationId(s_id);
-
-            observingEnds.emplace_back(
-                times.getObservingTime(idx, Timestamp::end), idx);
-        }
-
-        std::sort(
-            observingEnds.begin(),
-            observingEnds.end(),
-            [](const auto& a, const auto& b) {
-                return a.first > b.first;
-            });
-
-        // Keep the longest observation no longer than the second-longest.
-        const unsigned int clipEnd = observingEnds[1].first;
-
-        for (const auto& item : observingEnds) {
-            const unsigned int end = item.first;
-            const unsigned long idx = item.second;
-
-            if (end <= clipEnd) {
-                continue;
-            }
-
-            const unsigned int start =
-                times.getObservingTime(idx, Timestamp::start);
-
-            if (clipEnd > start) {
-                times.setObservingTime(
-                    idx, clipEnd, Timestamp::end);
-            }
-        }
-    }
-
-    // Refresh BOTH start and end pointing vectors after all timing changes.
-    for (Scan& scan : scans) {
-        for (unsigned int s_id : scan.getStationIds()) {
-            refreshPointingVector(scan, s_id, Timestamp::start);
-            refreshPointingVector(scan, s_id, Timestamp::end);
-        }
-
-        scan.updateObservingTime();
-    }
-}
-#else
-void ModelBase::packScans(std::vector<Scan>& scans) const noexcept
-{
-    std::map<unsigned int, std::vector<size_t>> scansByStation;
-
-    for (const Station& station : sol_.network_.getStations()) {
-        scansByStation.emplace(station.getId(), std::vector<size_t>{});
-    }
-
-    for (size_t i = 0; i < scans.size(); ++i) {
-        for (unsigned int s_id : scans[i].getStationIds()) {
-            auto it = scansByStation.find(s_id);
-            if (it != scansByStation.end()) {
-                it->second.push_back(i);
-            }
-        }
-    }
-
-    // Sort each station's scans chronologically.
-    for (auto& entry : scansByStation) {
-        const unsigned int s_id = entry.first;
-        auto& stationScans = entry.second;
-
-        std::sort(
-            stationScans.begin(),
-            stationScans.end(),
-            [&scans, s_id](size_t a, size_t b) {
-                const auto idxA = *scans[a].findIdxOfStationId(s_id);
-                const auto idxB = *scans[b].findIdxOfStationId(s_id);
-
-                const unsigned int startA =
-                    scans[a].getTimes().getFieldSystemTime(idxA);
-                const unsigned int startB =
-                    scans[b].getTimes().getFieldSystemTime(idxB);
-
-                return startA != startB ? startA < startB : a < b;
-            });
-    }
-
-    // Refresh either pointing vector using its actual observation boundary.
-    auto refreshPointingVector =
-        [this](Scan& scan, unsigned int s_id, Timestamp ts) {
-            const unsigned long idx = *scan.findIdxOfStationId(s_id);
-
-            PointingVector& pv = scan.referencePointingVector(idx, ts);
-
-            pv.setTime(scan.getTimes().getObservingTime(idx, ts));
-
-            sol_.network_.refStation(s_id).calcAzEl_rigorous(
-                sol_.sourceList_.getSource(scan.getSourceId()),
-                pv);
-        };
+    // update the start or end pointing vector of a station in a scan
+    auto refreshPointingVector = [this](Scan& scan, unsigned int s_id, Timestamp ts) {
+        const unsigned long s_idx = *scan.findIdxOfStationId(s_id);
+        PointingVector& pv = scan.referencePointingVector(s_idx, ts);
+        pv.setTime(scan.getTimes().getObservingTime(s_idx, ts));
+        sol_.network_.refStation(s_id).calcAzEl_rigorous(sol_.sourceList_.getSource(scan.getSourceId()), pv);
+    };
 
     // Record same-source extensions for collective validation in the
     // clipping phase. No subsequent-scan overhead is removed during growth.
-    struct SameSourceExtension {
+    // because VieVS::Scan objects assume a unified start time,
+    // its not possible to represent a single station exiting and entering a scan at multiple points
+    // instead, we eliminate all the overhead time from a 'continuation' (i.e. another scan of the same source directly after the first)
+    // and treat it as an extension
+    struct ScanExtension {
         size_t currentScan;
         size_t nextScan;
         unsigned int stationId;
@@ -1863,16 +1012,12 @@ void ModelBase::packScans(std::vector<Scan>& scans) const noexcept
         unsigned int nextStart;
         PointingVector originalEndPV;
     };
-
-    std::vector<SameSourceExtension> extensions;
-
-    // Maps a current scan/station pair to its proposed extension.
+    std::vector<ScanExtension> extensions;
     using ExtensionKey = std::pair<size_t, unsigned int>;
     std::map<ExtensionKey, size_t> extensionByScanStation;
     
-
-    // Grow observations forward.
-    for (const auto& entry : scansByStation) {
+    // grow observations
+    for(const auto& entry : scansByStation) {
         const unsigned int s_id = entry.first;
         const auto& stationScans = entry.second;
 
@@ -1880,397 +1025,343 @@ void ModelBase::packScans(std::vector<Scan>& scans) const noexcept
 
         bool isFirstScan = true;
 
-        const unsigned int constTimes =
-            station.getPARA().systemDelay + station.getPARA().preob;
-
-        for (size_t i = 0; i + 1 < stationScans.size(); ++i) {
+        const unsigned int constTimes = station.getPARA().systemDelay + station.getPARA().preob;
+        for(size_t i = 0; i + 1 < stationScans.size(); ++i) {
             const size_t currentScanIdx = stationScans[i];
             const size_t nextScanIdx = stationScans[i + 1];
-
             Scan& current = scans[currentScanIdx];
             Scan& next = scans[nextScanIdx];
-
             ScanTimes& currentTimes = current.referenceTime();
             ScanTimes& nextTimes = next.referenceTime();
 
-            const unsigned long currentIdx =
-                *current.findIdxOfStationId(s_id);
-            const unsigned long nextIdx =
-                *next.findIdxOfStationId(s_id);
+            const unsigned long currentIdx = *current.findIdxOfStationId(s_id);
+            const unsigned long nextIdx = *next.findIdxOfStationId(s_id);
 
-            const unsigned int originalEnd =
-                currentTimes.getObservingTime(
-                    currentIdx, Timestamp::end);
+            const unsigned int originalEnd = currentTimes.getObservingTime(currentIdx, Timestamp::end);
+            const unsigned int nextStart = nextTimes.getObservingTime(nextIdx, Timestamp::start);
+            if(nextStart <= originalEnd) continue;
 
-            const unsigned int nextStart =
-                nextTimes.getObservingTime(
-                    nextIdx, Timestamp::start);
+            const unsigned int nextIdle = nextTimes.getIdleDuration(nextIdx);
 
-            const unsigned int nextIdle =
-                nextTimes.getIdleDuration(nextIdx);
-
-            if (nextStart <= originalEnd) {
-                continue;
-            }
-
-            const bool sameSource =
-                current.getSourceId() == next.getSourceId();
-
-            if (sameSource) {
-                // Propose extending to the next observation's start.
-                // Keep the next scan's timing untouched until validation.
-                const PointingVector originalEndPV =
-                    current.getPointingVector(
-                        static_cast<int>(currentIdx), Timestamp::end);
-
-                const size_t extensionIdx = extensions.size();
-
+            const bool sameSource = current.getSourceId() == next.getSourceId();
+            if(sameSource) {
+                if(crossesDowntime(s_id, originalEnd, nextStart)) continue;
                 extensions.push_back({
                     currentScanIdx,
                     nextScanIdx,
                     s_id,
                     originalEnd,
                     nextStart,
-                    originalEndPV
+                    current.getPointingVector(static_cast<int>(currentIdx), Timestamp::end)
                 });
 
-                extensionByScanStation.emplace(
-                    ExtensionKey{currentScanIdx, s_id},
-                    extensionIdx);
-
-                currentTimes.setObservingTime(
-                    currentIdx, nextStart, Timestamp::end);
-
-                refreshPointingVector(
-                    current, s_id, Timestamp::end);
+                extensionByScanStation.emplace(ExtensionKey{currentScanIdx, s_id}, extensions.size() - 1);
+                currentTimes.setObservingTime(currentIdx, nextStart, Timestamp::end);
+                refreshPointingVector(current, s_id, Timestamp::end);
 
                 continue;
             }
 
-            // Existing different-source logic: do not consume time
-            // needed for slewing or other overhead.
-            if (nextIdle == 0) {
-                continue;
-            }
+            // if the sources are different, do not consume actually-needed overhead like slew or preob
+            if(nextIdle == 0) continue;
 
-            const PointingVector originalEndPV =
-                current.getPointingVector(
-                    static_cast<int>(currentIdx), Timestamp::end);
+            const PointingVector originalEndPV = current.getPointingVector(static_cast<int>(currentIdx), Timestamp::end);
 
-            auto slewIsFeasible =
-                [&](unsigned int candidateEnd) -> bool {
-                    if (candidateEnd >= nextStart) {
-                        return false;
-                    }
+            const bool skipSlew = isFirstScan;
+            auto slewIsFeasible = [&](unsigned int candidateEnd) -> bool {
+                if(candidateEnd >= nextStart) return false;
+                currentTimes.setObservingTime(currentIdx, candidateEnd, Timestamp::end);
 
-                    currentTimes.setObservingTime(
-                        currentIdx, candidateEnd, Timestamp::end);
+                refreshPointingVector(current, s_id, Timestamp::end);
+                refreshPointingVector(next, s_id, Timestamp::start);
 
-                    refreshPointingVector(current, s_id, Timestamp::end);
-                    refreshPointingVector(next, s_id, Timestamp::start);
+                const PointingVector& thisEnd = current.getPointingVector(static_cast<int>(currentIdx), Timestamp::end);
+                const PointingVector& nextStartPV = next.getPointingVector(static_cast<int>(nextIdx), Timestamp::start);
+                const auto oslewtime = skipSlew ? boost::optional<unsigned int>(0) : station.slewTime(
+                    thisEnd, nextStartPV, currentTimes.getObservingDuration(currentIdx), true);
+                if(!oslewtime.is_initialized()) return false;
+                
+                // this mirrors the validation logic from checkAndStatistics
+                const unsigned long long required = static_cast<unsigned long long>(*oslewtime) + constTimes;
+                const unsigned long long available = static_cast<unsigned long long>(nextStart) - candidateEnd;
+                return available >= required;
+            };
 
-                    const PointingVector& thisEnd =
-                        current.getPointingVector(
-                            static_cast<int>(currentIdx), Timestamp::end);
+            unsigned int maxAllowedEnd = std::numeric_limits<unsigned int>::max();
 
-                    const PointingVector& nextStartPV =
-                        next.getPointingVector(
-                            static_cast<int>(nextIdx), Timestamp::start);
-
-                    const auto oslewtime = isFirstScan
-                        ? boost::optional<unsigned int>(0)
-                        : station.slewTime(
-                            thisEnd,
-                            nextStartPV,
-                            currentTimes.getObservingDuration(currentIdx),
-                            true);
-
-                    isFirstScan = false;
-
-                    if (!oslewtime.is_initialized()) {
-                        return false;
-                    }
-
-                    const unsigned long long required =
-                        static_cast<unsigned long long>(*oslewtime) +
-                        constTimes;
-
-                    const unsigned long long available =
-                        static_cast<unsigned long long>(nextStart) -
-                        candidateEnd;
-
-                    return available >= required;
-                };
-
-            unsigned int shift = nextIdle;
-            bool converged = false;
-            constexpr unsigned int maxIterations = 32;
-
-            for (unsigned int iteration = 0;
-                 iteration < maxIterations;
-                 ++iteration) {
-                const unsigned long long candidateEnd64 =
-                    static_cast<unsigned long long>(originalEnd) + shift;
-
-                if (candidateEnd64 >= nextStart ||
-                    candidateEnd64 >
-                        std::numeric_limits<unsigned int>::max()) {
-                    shift = 0;
-                }
-
-                const unsigned int candidateEnd = originalEnd + shift;
-
-                if (!slewIsFeasible(candidateEnd)) {
-                    currentTimes.setObservingTime(
-                        currentIdx, originalEnd, Timestamp::end);
-
-                    refreshPointingVector(current, s_id, Timestamp::end);
-
-                    if (shift == 0) {
+            const auto downtimeIt = downtime.find(s_id);
+            if(downtimeIt != downtime.end()) {
+                for(const auto& entry : downtimeIt->second) {
+                    if(std::get<0>(entry) >= originalEnd) {
+                        maxAllowedEnd = std::get<0>(entry);
                         break;
                     }
+                }
+            }
 
+            unsigned int shift = nextIdle;
+
+            // check to make sure we aren't extending into a downtime period
+            if(maxAllowedEnd <= originalEnd) continue;
+
+            shift = std::min(shift, maxAllowedEnd - originalEnd);
+
+            // iteratively try to improve observation time while keeping slew valid
+            bool converged = false;
+            constexpr unsigned int maxIterations = 32;
+            for(unsigned int iteration = 0; iteration < maxIterations; ++iteration) {
+                const unsigned long long candidateEndTemp = static_cast<unsigned long long>(originalEnd) + shift;
+                if(candidateEndTemp >= nextStart || candidateEndTemp > std::numeric_limits<unsigned int>::max()) shift = 0;
+
+                const unsigned int candidateEnd = originalEnd + shift;
+                if(!slewIsFeasible(candidateEnd)) {
+                    currentTimes.setObservingTime(currentIdx, originalEnd, Timestamp::end);
+                    refreshPointingVector(current, s_id, Timestamp::end);
+                    if(shift == 0) break;
                     --shift;
                     continue;
                 }
 
-                const PointingVector& thisEnd =
-                    current.getPointingVector(
-                        static_cast<int>(currentIdx), Timestamp::end);
+                const PointingVector& thisEnd = current.getPointingVector(static_cast<int>(currentIdx), Timestamp::end);
+                const PointingVector& nextStartPV = next.getPointingVector(static_cast<int>(nextIdx), Timestamp::start);
 
-                const PointingVector& nextStartPV =
-                    next.getPointingVector(
-                        static_cast<int>(nextIdx), Timestamp::start);
-
-                const auto oslewtime = station.slewTime(
-                    thisEnd,
-                    nextStartPV,
+                const auto oslewtime = station.slewTime(thisEnd, nextStartPV,
                     currentTimes.getObservingDuration(currentIdx));
-
-                if (!oslewtime.is_initialized()) {
-                    currentTimes.setObservingTime(
-                        currentIdx, originalEnd, Timestamp::end);
-
+                if(!oslewtime.is_initialized()) {
+                    currentTimes.setObservingTime(currentIdx, originalEnd, Timestamp::end);
                     refreshPointingVector(current, s_id, Timestamp::end);
                     shift = 0;
                     break;
                 }
 
-                const unsigned long long required =
-                    static_cast<unsigned long long>(*oslewtime) +
-                    constTimes;
+                const unsigned long long required = static_cast<unsigned long long>(*oslewtime) + constTimes;
+                const unsigned long long available = static_cast<unsigned long long>(nextStart) - candidateEnd;
 
-                const unsigned long long available =
-                    static_cast<unsigned long long>(nextStart) -
-                    candidateEnd;
-
-                const unsigned int safeShift =
-                    available >= required
-                        ? static_cast<unsigned int>(
-                              std::min<unsigned long long>(
-                                  nextIdle,
-                                  static_cast<unsigned long long>(shift) +
-                                      available - required))
-                        : 0;
-
-                if (safeShift == shift) {
+                const unsigned int safeShift = available >= required ? static_cast<unsigned int>(std::min<unsigned long long>(nextIdle, static_cast<unsigned long long>(shift) + available - required)) : 0;
+                if(safeShift == shift) {
                     converged = true;
                     break;
                 }
-
                 shift = std::min(shift, safeShift);
 
-                currentTimes.setObservingTime(
-                    currentIdx, originalEnd, Timestamp::end);
-
+                currentTimes.setObservingTime(currentIdx, originalEnd, Timestamp::end);
                 refreshPointingVector(current, s_id, Timestamp::end);
             }
 
-            if (!converged) {
-                currentTimes.setObservingTime(
-                    currentIdx, originalEnd, Timestamp::end);
-
-                PointingVector& pv =
-                    current.referencePointingVector(
-                        static_cast<int>(currentIdx), Timestamp::end);
-
+            if(!converged) {
+                currentTimes.setObservingTime(currentIdx, originalEnd, Timestamp::end);
+                PointingVector& pv = current.referencePointingVector(static_cast<int>(currentIdx), Timestamp::end);
                 pv = originalEndPV;
                 continue;
             }
 
             const unsigned int finalEnd = originalEnd + shift;
-
-            if (!slewIsFeasible(finalEnd)) {
-                currentTimes.setObservingTime(
-                    currentIdx, originalEnd, Timestamp::end);
-
-                PointingVector& pv =
-                    current.referencePointingVector(
-                        static_cast<int>(currentIdx), Timestamp::end);
-
+            if(!slewIsFeasible(finalEnd)) {
+                currentTimes.setObservingTime(currentIdx, originalEnd, Timestamp::end);
+                PointingVector& pv = current.referencePointingVector(static_cast<int>(currentIdx), Timestamp::end);
                 pv = originalEndPV;
                 continue;
             }
 
             nextTimes.setIdleTime(nextIdx, nextIdle - shift);
+            isFirstScan = false;
         }
     }
 
-    // Resolve same-source extension proposals collectively.
-    //
-    // Initially assume all proposals are valid. Iteratively reject proposals
-    // that would leave fewer than minNumberOfSites stations observing at
-    // the proposed endpoint. Re-evaluation matters because rejecting one
-    // station's proposal may invalidate another station's proposal.
+    // given potential ScanExtensions, 
+    // we have to accept or reject them depending on whether or not minNumberOfSites is respected
     std::vector<bool> accepted(extensions.size(), true);
 
     bool changed = true;
-
-    while (changed) {
+    while(changed) {
         changed = false;
+        for(size_t e = 0; e < extensions.size(); ++e) {
+            if(!accepted[e]) continue;
 
-        for (size_t e = 0; e < extensions.size(); ++e) {
-            if (!accepted[e]) {
-                continue;
-            }
-
-            const SameSourceExtension& extension = extensions[e];
+            const ScanExtension& extension = extensions[e];
             const Scan& current = scans[extension.currentScan];
 
-            const unsigned int minSites =
-                sol_.sourceList_.getSource(current.getSourceId())
-                    ->getPARA().minNumberOfSites;
+            const unsigned int minSites = sol_.sourceList_.getSource(current.getSourceId())->getPARA().minNumberOfSites;
 
             unsigned int participatingStations = 0;
+            for(unsigned int otherId : current.getStationIds()) {
+                const unsigned long otherIdx = *current.findIdxOfStationId(otherId);
+                const unsigned int otherStart = current.getTimes().getObservingTime(otherIdx, Timestamp::start);
+                unsigned int otherEnd = current.getTimes().getObservingTime(otherIdx, Timestamp::end);
 
-            for (unsigned int otherId : current.getStationIds()) {
-                const unsigned long otherIdx =
-                    *current.findIdxOfStationId(otherId);
-
-                const unsigned int otherStart =
-                    current.getTimes().getObservingTime(
-                        otherIdx, Timestamp::start);
-
-                unsigned int otherEnd =
-                    current.getTimes().getObservingTime(
-                        otherIdx, Timestamp::end);
-
-                const auto proposalIt = extensionByScanStation.find(
-                    ExtensionKey{extension.currentScan, otherId});
-
-                if (proposalIt != extensionByScanStation.end()) {
+                const auto proposalIt = extensionByScanStation.find(ExtensionKey{extension.currentScan, otherId});
+                if(proposalIt != extensionByScanStation.end()) {
                     const size_t otherProposal = proposalIt->second;
-
-                    if (accepted[otherProposal]) {
+                    if(accepted[otherProposal]) {
                         otherEnd = extensions[otherProposal].nextStart;
                     } else {
                         otherEnd = extensions[otherProposal].originalEnd;
                     }
                 }
 
-                if (otherStart < extension.nextStart &&
-                    otherEnd >= extension.nextStart) {
-                    ++participatingStations;
-                }
+                if(otherStart < extension.nextStart && otherEnd >= extension.nextStart) ++participatingStations;
             }
 
-            if (participatingStations < minSites) {
+            if(participatingStations < minSites) {
                 accepted[e] = false;
                 changed = true;
             }
         }
     }
 
-    // Commit accepted proposals and roll back rejected ones.
-    // No timing changes to the subsequent scans were made during growth.
-    for (size_t e = 0; e < extensions.size(); ++e) {
-        const SameSourceExtension& extension = extensions[e];
+    // incorporate accepted extensions into the schedule
+    for(size_t e = 0; e < extensions.size(); ++e) {
+        const ScanExtension& extension = extensions[e];
 
         Scan& current = scans[extension.currentScan];
         Scan& next = scans[extension.nextScan];
+        const unsigned long currentIdx = *current.findIdxOfStationId(extension.stationId);
+        const unsigned long nextIdx = *next.findIdxOfStationId(extension.stationId);
 
-        const unsigned long currentIdx =
-            *current.findIdxOfStationId(extension.stationId);
-        const unsigned long nextIdx =
-            *next.findIdxOfStationId(extension.stationId);
-
-        if (!accepted[e]) {
-            current.referenceTime().setObservingTime(
-                currentIdx,
-                extension.originalEnd,
-                Timestamp::end);
-
-            PointingVector& pv =
-                current.referencePointingVector(
-                    currentIdx, Timestamp::end);
-
+        if(!accepted[e]) {
+            current.referenceTime().setObservingTime(currentIdx, extension.originalEnd, Timestamp::end);
+            PointingVector& pv = current.referencePointingVector(currentIdx, Timestamp::end);
             pv = extension.originalEndPV;
-
             continue;
         }
 
-        // The extension is valid. Remove all overhead before the
-        // subsequent observation without changing its observing duration.
-        next.referenceTime().removeOverheadBeforeObservation(
-            static_cast<int>(nextIdx), extension.nextStart);
+        // the extension is valid, so we can remove overhead from the subsequent observation
+        next.referenceTime().removeOverheadBeforeObservation(static_cast<int>(nextIdx), extension.nextStart);
     }
 
-    // Existing final clipping phase.
-    for (Scan& scan : scans) {
+    // clip lengths such that no station observes alone
+    for(Scan& scan : scans) {
         ScanTimes& times = scan.referenceTime();
-
-        if (scan.getStationIds().size() < 2) {
-            continue;
-        }
+        if(scan.getStationIds().size() < 2) continue;
 
         std::vector<std::pair<unsigned int, unsigned long>> observingEnds;
         observingEnds.reserve(scan.getStationIds().size());
-
-        for (unsigned int s_id : scan.getStationIds()) {
-            const unsigned long idx = *scan.findIdxOfStationId(s_id);
-
-            observingEnds.emplace_back(
-                times.getObservingTime(idx, Timestamp::end), idx);
+        for(unsigned int s_id : scan.getStationIds()) {
+            const unsigned long s_idx = *scan.findIdxOfStationId(s_id);
+            observingEnds.emplace_back(times.getObservingTime(s_idx, Timestamp::end), s_idx);
         }
 
-        std::sort(
-            observingEnds.begin(),
-            observingEnds.end(),
-            [](const auto& a, const auto& b) {
-                return a.first > b.first;
-            });
+        std::sort(observingEnds.begin(), observingEnds.end(), [](const auto& a, const auto& b) {
+            return a.first > b.first;
+        });
 
         const unsigned int clipEnd = observingEnds[1].first;
-
-        for (const auto& item : observingEnds) {
+        for(const auto& item : observingEnds) {
             const unsigned int end = item.first;
-            const unsigned long idx = item.second;
+            const unsigned long s_idx = item.second;
+            if(end <= clipEnd) continue;
 
-            if (end <= clipEnd) {
-                continue;
-            }
-
-            const unsigned int start =
-                times.getObservingTime(idx, Timestamp::start);
-
-            if (clipEnd > start) {
-                times.setObservingTime(
-                    idx, clipEnd, Timestamp::end);
-            }
+            const unsigned int start = times.getObservingTime(s_idx, Timestamp::start);
+            if(clipEnd > start) times.setObservingTime(s_idx, clipEnd, Timestamp::end);
         }
     }
 
-    // Refresh BOTH start and end pointing vectors after all timing changes.
-    for (Scan& scan : scans) {
-        for (unsigned int s_id : scan.getStationIds()) {
+    for(Scan& scan : scans) {
+        for(unsigned int s_id : scan.getStationIds()) {
             refreshPointingVector(scan, s_id, Timestamp::start);
             refreshPointingVector(scan, s_id, Timestamp::end);
         }
+        scan.updateObservingTime();
+    }
 
+    // final validation check for overlaps
+    std::map<size_t, std::set<unsigned int>> stationsToRemove;
+    for(const auto& entry : scansByStation) {
+        const unsigned int s_id = entry.first;
+        std::vector<size_t> stationScans;
+        for(size_t i = 0; i < scans.size(); ++i) {
+            if(scans[i].findIdxOfStationId(s_id)) stationScans.push_back(i);
+        }
+        // sort by scan start
+        std::sort(stationScans.begin(), stationScans.end(), [&scans, s_id](size_t a, size_t b) {
+            const unsigned int a_start = scans[a].getTimes().getFieldSystemTime(
+                *scans[a].findIdxOfStationId(s_id), Timestamp::start);
+            const unsigned int b_start = scans[b].getTimes().getFieldSystemTime(
+                *scans[b].findIdxOfStationId(s_id), Timestamp::start);
+            return a_start != b_start ? a_start < b_start : a < b;
+        });
+
+        bool havePreviousObservation = false;
+        unsigned int lastRetainedObservingEnd = 0;
+        for(size_t scanIdx : stationScans) {
+            const Scan& scan = scans[scanIdx];
+            const unsigned long s_idx = *scan.findIdxOfStationId(s_id);
+            const unsigned int fieldSystemStart = scan.getTimes().getFieldSystemTime(s_idx, Timestamp::start);
+            const unsigned int observingEnd = scan.getTimes().getObservingTime(s_idx, Timestamp::end);
+            // reject participation if the scan start is before previous scan (for this station) finished
+            if(havePreviousObservation && fieldSystemStart < lastRetainedObservingEnd) {
+                stationsToRemove[scanIdx].insert(s_id);
+                continue;
+            }
+            // store as this station's last scan
+            lastRetainedObservingEnd = observingEnd;
+            havePreviousObservation = true;
+        }
+    }
+
+    // remove stations from observations in reverse order if some overlap has been produced (which shouldn't happen),
+    // but I haven't had time to validate every edge case, so I'm keeping it here
+    for(const auto& entry : stationsToRemove) {
+        Scan& scan = scans[entry.first];
+        const auto source = sol_.sourceList_.getSource(scan.getSourceId());
+        std::vector<int> indicesToRemove;
+        for(unsigned int s_id : entry.second) {
+            const auto s_idx = scan.findIdxOfStationId(s_id);
+            if(s_idx) indicesToRemove.push_back(static_cast<int>(*s_idx));
+        }
+        std::sort(indicesToRemove.begin(), indicesToRemove.end(), std::greater<int>());
+        for(int s_idx : indicesToRemove) scan.removeStation(s_idx, source);
+    }
+
+    // now, remove any scans that violate minNumberOfSites
+    std::vector<Scan> validScans;
+    validScans.reserve(scans.size());
+    for(Scan& scan : scans) {
+        const unsigned int minSites = sol_.sourceList_.getSource(scan.getSourceId())->getPARA().minNumberOfSites;
+        if(scan.getStationIds().size() < minSites) continue;
+        validScans.push_back(std::move(scan));
+    }
+    scans = std::move(validScans);
+
+    // once again, clip the longest observing station to the second longest, 
+    // in case a removed station was the co-observer of the previous longest observing station
+    for(Scan& scan : scans) {
+        const unsigned int minSites = sol_.sourceList_.getSource(scan.getSourceId())->getPARA().minNumberOfSites;
+        const size_t stationCount = scan.getStationIds().size();
+        if(stationCount < 2) continue;
+
+        std::vector<std::pair<unsigned int, unsigned long>> observingEnds;
+        observingEnds.reserve(stationCount);
+        for(unsigned int s_id : scan.getStationIds()) {
+            const unsigned long s_idx = *scan.findIdxOfStationId(s_id);
+            observingEnds.emplace_back(scan.getTimes().getObservingTime(s_idx, Timestamp::end), s_idx);
+        }
+        std::sort(observingEnds.begin(), observingEnds.end(), [](const auto& a, const auto& b) {
+            return a.first > b.first;
+        });
+
+        const unsigned int clipEnd = minSites <= stationCount ? observingEnds[minSites - 1].first : 0;
+
+        ScanTimes& times = scan.referenceTime();
+        for(const auto& item : observingEnds) {
+            const unsigned int end = item.first;
+            const unsigned long s_idx = item.second;
+            if(end <= clipEnd) continue;
+
+            const unsigned int start = times.getObservingTime(s_idx, Timestamp::start);
+            if(clipEnd > start) times.setObservingTime(s_idx, clipEnd, Timestamp::end);
+        }
+    }
+
+    // update pointing vectors according to the new scan times
+    for(Scan& scan : scans) {
+        for(unsigned int s_id : scan.getStationIds()) {
+            refreshPointingVector(scan, s_id, Timestamp::start);
+            refreshPointingVector(scan, s_id, Timestamp::end);
+        }
         scan.updateObservingTime();
     }
 }
-#endif
 
 
 std::string ModelBase::dump(size_t t0, size_t tf) const noexcept {

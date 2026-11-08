@@ -216,49 +216,6 @@ protected:
     }
 
 private:
-#if 0
-    /**
-     * @struct helper class for ActiveScans
-     * @author Hank Lewis
-     */
-    struct ScanBuilder {
-        unsigned long qId;
-        std::map<unsigned long, std::pair<PointingVector, size_t>> sData;
-        std::set<unsigned long> sContinuation;
-        // none indicates failure, true is a successful append, 
-        // false indicates that a new scan needs to be created and this one terminated
-        boost::optional<bool> append(const ModelBase* model, 
-            std::shared_ptr<const VieVS::AbstractSource> const q, 
-            Station& s, size_t t) noexcept;
-        Scan finish(const ModelBase* model, 
-            const std::vector<unsigned int>& slewTime, 
-            std::vector<unsigned int>& endOfLastScan) const noexcept;
-    };
-
-    /**
-     * @class helper class for readScans
-     * @author Hank Lewis
-     */
-    class ActiveScans {
-    private:
-        std::vector<ScanBuilder> scans_;
-        std::vector<ScanBuilder> scansToAppend_;
-        const ModelBase* model_;
-
-    public:
-        ActiveScans(const ModelBase* model) : model_(model) { /* STUB */ }
-        void append(std::shared_ptr<const VieVS::AbstractSource> const q, 
-            Station& s, size_t t) noexcept;
-        void updateScans(std::vector<Scan>& scans, size_t t);
-    
-    protected:
-        std::vector<unsigned int> computeSlewTime(const ScanBuilder& scan, 
-            const std::vector<Scan>& scans) noexcept;
-        std::vector<unsigned int> computeEndOfLastScan(const ScanBuilder& scan, 
-            const std::vector<Scan>& scans) noexcept;
-    };
-#endif
-
     struct Interval {
         size_t start, end;
         unsigned int s;
