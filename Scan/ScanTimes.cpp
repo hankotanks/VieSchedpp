@@ -43,6 +43,13 @@ void ScanTimes::addTimes( int idx, unsigned int fieldSystem, unsigned int slew, 
     endOfObservingTime_[idx] = endOfIdleTime_[idx] + preob;
 }
 
+void ScanTimes::addTimes( int idx, unsigned int fieldSystem, unsigned int slew, unsigned int idle, unsigned int preob ) noexcept {
+    endOfFieldSystemTime_[idx] = endOfLastScan_[idx] + fieldSystem;
+    endOfSlewTime_[idx] = endOfFieldSystemTime_[idx] + slew;
+    endOfIdleTime_[idx] = endOfSlewTime_[idx] + idle;
+    endOfPreobTime_[idx] = endOfIdleTime_[idx] + preob;
+}
+
 
 void ScanTimes::removeElement( int idx ) noexcept {
     endOfLastScan_.erase( next( endOfLastScan_.begin(), idx ) );
@@ -256,6 +263,15 @@ bool ScanTimes::setPreobTime( int i, unsigned int preob ) {
 }
 
 
+void ScanTimes::setIdleTime( int i, unsigned int idle ) {
+    unsigned int slewTime = getSlewDuration(i);
+    unsigned int fieldSystemTime = getFieldSystemDuration(i);
+    endOfSlewTime_[i] = endOfIdleTime_[i] - idle;
+    endOfFieldSystemTime_[i] = endOfSlewTime_[i] - slewTime;
+    endOfLastScan_[i] = endOfFieldSystemTime_[i] - fieldSystemTime;
+}
+
+
 void ScanTimes::setObservingTime( int idx, unsigned int time, Timestamp ts ) {
     switch ( ts ) {
         case Timestamp::start: {
@@ -300,6 +316,17 @@ int ScanTimes::removeUnnecessaryObservingTime( Timestamp ts ) {
         default:
             return numeric_limits<int>::max();
     }
+}
+
+
+void ScanTimes::removeOverheadBeforeObservation(
+    int idx, unsigned int observingStart) noexcept
+{
+    endOfLastScan_[idx] = observingStart;
+    endOfFieldSystemTime_[idx] = observingStart;
+    endOfSlewTime_[idx] = observingStart;
+    endOfIdleTime_[idx] = observingStart;
+    endOfPreobTime_[idx] = observingStart;
 }
 
 

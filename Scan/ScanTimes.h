@@ -146,6 +146,19 @@ class ScanTimes : public VieVS_Object {
 
 
     /**
+     * @brief adds the times for an element
+     * @author Hank Lewis
+     *
+     * @param idx index of which element should be updated
+     * @param fieldSystem field system time in seconds
+     * @param slew slew time in seconds
+     * @param idle idle time in seconds
+     * @param preob calibration time in seconds
+     */
+    void addTimes( int idx, unsigned int fieldSystem, unsigned int slew, unsigned int idle, unsigned int preob ) noexcept;
+
+
+    /**
      * @brief set new id
      * @author Matthias Schartner
      */
@@ -554,6 +567,16 @@ class ScanTimes : public VieVS_Object {
 
 
     /**
+     * @brief set ile time for one station
+     * @author Hank Lewis
+     *
+     * @param idx index
+     * @param idle idle time
+     */
+    void setIdleTime( int idx, unsigned int idle );
+
+
+    /**
      * @brief remove unnecessary observing time
      * @author Matthias Schartner
      *
@@ -561,6 +584,8 @@ class ScanTimes : public VieVS_Object {
      * @return index where observing time was removed
      */
     int removeUnnecessaryObservingTime( Timestamp ts );
+
+    void removeOverheadBeforeObservation( int idx, unsigned int observingStart) noexcept;
 
 
    private:

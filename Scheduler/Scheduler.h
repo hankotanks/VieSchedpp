@@ -34,13 +34,13 @@
 #include <utility>
 #include <vector>
 
-#include "Algorithm/FocusCorners.h"
-#include "Initializer.h"
-#include "Misc/Constants.h"
-#include "Misc/StationEndposition.h"
-#include "Misc/Subnetting.h"
-#include "Scan/Subcon.h"
-#include "Station/Network.h"
+#include "../Algorithm/FocusCorners.h"
+#include "../Initializer.h"
+#include "../Misc/Constants.h"
+#include "../Misc/StationEndposition.h"
+#include "../Misc/Subnetting.h"
+#include "../Scan/Subcon.h"
+#include "../Station/Network.h"
 
 
 namespace VieVS {

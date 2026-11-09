@@ -22,9 +22,9 @@
 #include <memory>
 #include <stdexcept>
 
-#include "Output/Output.h"
+#include "../Output/Output.h"
+#include "../Source/AbstractSource.h"
 #include "Scheduler.h"
-#include "Source/AbstractSource.h"
 
 #ifdef WITH_GUROBI
 #include <gurobi_c++.h>
@@ -44,17 +44,32 @@ namespace {
 } // private
 
 namespace VieVS {
-    void SchedulerILP::initialize() noexcept {
+    void SchedulerILP::initialize(const std::set<unsigned long>& sourceMask) noexcept {
         unsigned int blockLength = getBlockLength(network_);
         
         try {
             unsigned int windowLength;
-            windowLength = xml_.get<unsigned int>( "VieSchedpp.general.ilpOptimizationWindow" );
+            windowLength = xml_.get<unsigned int>( "VieSchedpp.general.ilp.window" );
             if(windowLength < 3 * blockLength) {
                 throw std::runtime_error("Length of optimization window must be >= 3 times the minimum scan length");
             }
+            bool windowSourceRestriction = xml_.get<bool>( "VieSchedpp.general.ilp.windowSourceRestriction", false );
+            // get objective timeouts and enabled status
+            std::map<std::string, std::pair<bool, unsigned int>> objectives;
+            auto parent = xml_.get_child_optional("VieSchedpp.general.ilp.objectives");
+            if(parent) {
+                auto range = parent->equal_range("objective");
+                for(auto it = range.first; it != range.second; ++it) {
+                    const auto& objective = it->second;
+                    const auto name = objective.get<std::string>("name");
+                    const bool enabled = objective.get<bool>("enabled", true);
+                    const unsigned int timeout = objective.get<unsigned int>("timeout", 0);
+                    objectives[name] = {enabled, timeout};
+                }
+            }
             // initialize the model
-            model_ = new Model(network_, sourceList_, blockLength, windowLength);
+            model_ = new Model(network_, sourceList_, sourceMask, Scheduler::getObservingMode(), 
+                blockLength, windowLength, windowSourceRestriction, std::move(objectives));
         }
 #ifdef WITH_GUROBI 
         catch(GRBException& e) {
@@ -79,6 +94,26 @@ namespace VieVS {
     
     void SchedulerILP::start() noexcept {
         Scheduler::start();
+        sortSchedule( Timestamp::start );
+        Skd greedySchedule{path_ + getName() + "_greedy.skd"};
+        greedySchedule.writeSkd(network_, sourceList_, scans_, skdCatalogs_, xml_);
+
+        std::set<unsigned long> sourceMask;
+        for(const Scan& scan : scans_) {
+            if(sourceMask.count(scan.getSourceId()) > 0) continue;
+            sourceMask.insert(scan.getSourceId());
+        }
+
+        this->initialize(sourceMask);
+
+        if(model_ == nullptr) {
+#ifdef VIESCHEDPP_LOG
+            BOOST_LOG_TRIVIAL( info ) << "Failed to initialize ILP model, proceeding with default scheduler";
+#else
+            std::cout << "[info] Failed to initialize ILP model, proceeding with default scheduler";
+#endif 
+            return;
+        }
 
         for(SkyCoverage& sky : network_.refSkyCoverages()) {
             sky.calculateSkyCoverageScores();
@@ -112,20 +147,6 @@ namespace VieVS {
         scans_.insert(scans_.end(), scansOptimal.begin(), scansOptimal.end());
         sortSchedule( Timestamp::start );
 
-#if 0
-        for(const Scan& scan : scans_) {
-            std::cout << "[" << scan.getId() << "] source: " << scan.getSourceId();
-            for(unsigned long sId : scan.getStationIds()) {
-                if(auto idx = scan.findIdxOfStationId(sId)) {
-                    std::cout << ", " << network_.getStation(sId).getName() << 
-                        " (" << scan.getTimes().getObservingTime(*idx) << 
-                        " for " << scan.getTimes().getObservingDuration(*idx) << ")";
-                }
-            }
-            std::cout << std::endl;
-        }
-#endif
-
         // clear all the statistics from the greedy run
         for(Station& s : network_.refStations()) {
             s.setStatistics(Station::Statistics());
@@ -149,36 +170,12 @@ namespace VieVS {
             sky.calculateSkyCoverageScores();
         }
 
-        std::string fileName = getName() + "_iteration_ilp.txt";
-        std::ofstream of;
-        of.open( path_ + fileName );
-
-        // TODO: This currently causes rare slew time violations
-#if 0
-        if ( parameters_.idleToObservingTime ) {
-            switch ( ScanTimes::getAlignmentAnchor() ) {
-                case ScanTimes::AlignmentAnchor::start: {
-                    idleToScanTime( Timestamp::end, of );
-                    break;
-                }
-                case ScanTimes::AlignmentAnchor::end: {
-                    idleToScanTime( Timestamp::start, of );
-                    break;
-                }
-                case ScanTimes::AlignmentAnchor::individual: {
-                    idleToScanTime( Timestamp::end, of );
-                    idleToScanTime( Timestamp::start, of );
-                    break;
-                }
-                default:
-                    break;
-            }
-        }
-#endif
-
         updateObservingTimes();
 
         // check if there was an error during the session (and append to the output log)
+        std::string fileName = getName() + "_iteration_ilp.txt";
+        std::ofstream of;
+        of.open( path_ + fileName );
         if ( !checkAndStatistics( of ) ) {
 #ifdef VIESCHEDPP_LOG
             BOOST_LOG_TRIVIAL( error ) << "error(s) found while checking the schedule";

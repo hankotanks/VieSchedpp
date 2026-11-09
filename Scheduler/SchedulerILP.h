@@ -28,19 +28,11 @@
 #define SCHEDULER_ILP_H
 #include <boost/date_time.hpp>
 #include <boost/optional.hpp>
-#include <memory>
-#include <tuple>
-#include <utility>
-#include <vector>
-#include <unordered_map>
-#include <unordered_set>
-#include <iostream>
-#include <numeric>
-#include <algorithm>
-#include <limits>
+#include <set>
+#include <string>
 
-#include "Initializer.h"
-#include "Model.h"
+#include "../Initializer.h"
+#include "../Model/Model.h"
 #include "Scheduler.h"
 
 namespace VieVS {
@@ -55,7 +47,7 @@ namespace VieVS {
 class SchedulerILP : public Scheduler {
     friend class Output;
 private:
-    void initialize() noexcept;
+    void initialize(const std::set<unsigned long>& sourceMask) noexcept;
 public:
     /**
     * @brief constructor
@@ -65,8 +57,8 @@ public:
     * @param path path to VieSchedpp.xml file
     * @param fname file name
     */
-    SchedulerILP( Initializer &init, std::string path, std::string fname, std::ofstream& statisticsOf ) : 
-        Scheduler(init, path, fname), statisticsOf_(statisticsOf) { SchedulerILP::initialize(); }
+    SchedulerILP( Initializer &init, std::string path, std::string fname, const SkdCatalogReader& skdCatalogs, std::ofstream& statisticsOf ) : 
+        Scheduler(init, path, fname), skdCatalogs_(skdCatalogs), statisticsOf_(statisticsOf) { /* STUB */ }
 
     ~SchedulerILP() {
         if(model_) delete model_;
@@ -97,6 +89,7 @@ public:
 
 private:
      Model* model_ = nullptr;
+     const SkdCatalogReader& skdCatalogs_;
      std::ofstream& statisticsOf_;
 };
 }

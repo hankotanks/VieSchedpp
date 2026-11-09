@@ -24,7 +24,7 @@
  */
 
 #include "Scheduler.h"
-#include "Misc/VieVS_NamedObject.h"
+#include "../Misc/VieVS_NamedObject.h"
 
 
 using namespace std;
@@ -578,7 +578,7 @@ void Scheduler::start() noexcept {
 #endif
 
         // restart schedule
-        start();
+        Scheduler::start();
     } else {
         if ( parameters_.idleToObservingTime ) {
             switch ( ScanTimes::getAlignmentAnchor() ) {

@@ -28,7 +28,7 @@
 #define SKDREADER_H
 
 
-#include "../Scheduler.h"
+#include "../Scheduler/Scheduler.h"
 #include "SkdCatalogReader.h"
 #ifdef VIESCHEDPP_LOG
 #include <boost/log/attributes/named_scope.hpp>

@@ -290,13 +290,13 @@ void VieSchedpp::run(void) {
 
             try {
                 bool ilp = false;
-                if( auto val = xml_.get_optional<bool>( "VieSchedpp.general.ilp" )) {
+                if( auto val = xml_.get_optional<bool>( "VieSchedpp.general.ilp.enabled" )) {
                     ilp = *val;
                 }
                 
                 VieVS::Scheduler* scheduler;
                 if(ilp) {
-                    scheduler = new VieVS::SchedulerILP( newInit, path_, fname, statisticsOf );
+                    scheduler = new VieVS::SchedulerILP( newInit, path_, fname, skdCatalogs_, statisticsOf );
                 } else {
                     scheduler = new VieVS::Scheduler( newInit, path_, fname );
                 }
