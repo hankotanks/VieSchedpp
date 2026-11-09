@@ -53,7 +53,6 @@ std::vector<std::tuple<std::string, GRBLinExpr, int, unsigned int>> Model::prepa
     Model::constrExclusive(window, sourceSubMask);
     Model::constrPairwise(window, sourceSubMask);
     Model::constrBaseline(window, sourceSubMask);
-    // Model::constrBaselineExclusivity(window, sourceSubMask);
     Model::constrSlew(window, sourceSubMask);
     Model::constrSNR(window, sourceSubMask);
     Model::constrDuration(window, sourceSubMask);
@@ -147,15 +146,6 @@ next:;
                 }
             }
         }
-        // manually calculate the baseline objective, because Gurobi is very stupid
-        // double sum = 0.0;
-        // GRBLinExpr expr = Model::objBaselines(window, {});
-        // for(int i = 0; i < expr.size(); i++) {
-        //     double var = expr.getVar(i).get(GRB_DoubleAttr_X);
-        //     double coeff = expr.getCoeff(i);
-        //     if(var > 0.5) sum += coeff * var;
-        // }
-        // model_->set(GRB_DoubleAttr_Obj, sum);
     }
 }
 
